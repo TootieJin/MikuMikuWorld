@@ -1,60 +1,86 @@
 #include "ScoreSerializer.h"
-
-#include "NativeScoreSerializer.h"
-#include "SusSerializer.h"
-#include "SonolusSerializer.h"
+#include "Localization.h"
+#include "Constants.h"
+#include "IO.h"
+#include "File.h"
+#include <array>
+#include <algorithm>
 
 namespace MikuMikuWorld
 {
-	constexpr std::array<std::string_view, 3> supportedScoreExtensions =
+	SerializeFormat ScoreSerializeController::toSerializeFormat(const std::string_view& filename)
 	{
-		MMWS_EXTENSION,
-		SUS_EXTENSION,
-		USC_EXTENSION
-	};
-
-	bool ScoreSerializer::isSupportedFileFormat(const std::string_view& extension)
-	{
-		return std::find(supportedScoreExtensions.cbegin(), supportedScoreExtensions.cend(), extension) != supportedScoreExtensions.end();
+		const auto hasExtension = IO::endsWith;
+		if (hasExtension(filename, MMWS_EXTENSION))
+		{
+			return SerializeFormat::NativeFormat;
+		}
+		else if (hasExtension(filename, SUS_EXTENSION))
+		{
+			return SerializeFormat::SusFormat;
+		}
+		else if (hasExtension(filename, JSON_EXTENSION) ||
+		         hasExtension(filename, GZ_JSON_EXTENSION))
+		{
+			return SerializeFormat::LvlDataFormat;
+		}
+		return SerializeFormat::FormatCount;
 	}
 
-	std::unique_ptr<ScoreSerializer> ScoreSerializerFactory::getSerializer(const std::string& fileExtension)
+	
+	bool ScoreSerializeController::isValidFormat(SerializeFormat format)
 	{
-		std::string ext{fileExtension};
-		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+		return static_cast<int>(format) >= 0 &&
+		       static_cast<int>(format) < static_cast<int>(SerializeFormat::FormatCount);
+	}
 
-		if (ext == MMWS_EXTENSION)
+	IO::FileDialogFilter ScoreSerializeController::getFormatFilter(SerializeFormat format)
+	{
+		switch (format)
 		{
-			return std::make_unique<NativeScoreSerializer>();
-		}
-		else if (ext == SUS_EXTENSION)
-		{
-			return std::make_unique<SusSerializer>();
-		}
-		else if (ext == USC_EXTENSION)
-		{
-			bool gzip = true;
-			bool prettyDump = false;
-#if _DEBUG
-			prettyDump = true;
-#endif
-
-#ifdef USC_NO_GZIP
-			gzip = false;
-#endif
-			return std::make_unique<SonolusSerializer>(prettyDump, gzip);
-		}
-		else
-		{
-			throw UnsupportedScoreFormatError(fileExtension);
+		case SerializeFormat::NativeFormat:
+			return IO::mmwsFilter;
+		case SerializeFormat::SusFormat:
+			return IO::susFilter;
+		case SerializeFormat::LvlDataFormat:
+			return IO::lvlDatFilter;
+		default:
+			return IO::allFilter;
 		}
 	}
 
-	bool ScoreSerializerFactory::isNativeScoreFormat(const std::string& fileExtension)
+	std::string ScoreSerializeController::getFormatDefaultExtension(SerializeFormat format)
 	{
-		std::string ext{ fileExtension };
-		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+		switch (format)
+		{
+		case SerializeFormat::NativeFormat:
+			return "unchmmws";
+		case SerializeFormat::SusFormat:
+			return "sus";
+		case SerializeFormat::LvlDataFormat:
+			return "json.gz";
+		default:
+			return "";
+		}
+	}
 
-		return ext == MMWS_EXTENSION;
+	Score& ScoreSerializeController::getScore()
+	{
+		return score;
+	}
+
+	const std::string& ScoreSerializeController::getFilename() const
+	{
+		return filename;
+	}
+
+	const std::string& ScoreSerializeController::getScoreFilename() const
+	{
+		return scoreFilename;
+	}
+
+	const std::string& ScoreSerializeController::getErrorMessage() const
+	{
+		return errorMessage;
 	}
 }

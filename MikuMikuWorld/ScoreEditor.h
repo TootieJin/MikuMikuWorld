@@ -1,6 +1,8 @@
 #pragma once
 #include "ScoreEditorWindows.h"
 #include "ScorePreview.h"
+#include "ScoreSerializeWindow.h"
+#include "DebugEffectView.h"
 #include <future>
 
 namespace MikuMikuWorld
@@ -22,18 +24,18 @@ namespace MikuMikuWorld
 		SettingsWindow settingsWindow{};
 		RecentFileNotFoundDialog recentFileNotFoundDialog{};
 		AboutDialog aboutDialog{};
+		ScoreSerializeWindow serializeWindow;
+		Effect::DebugEffectView debugEffectView{};
 
 		Stopwatch autoSaveTimer;
 		std::string autoSavePath;
 		bool showImGuiDemoWindow{false};
 
-		std::future<void> loadScoreFuture{};
 		std::future<void> loadMusicFuture{};
 		std::future<void> loadPresetsFuture{};
 		std::future<void> importPresetFuture{};
 
 		bool save(std::string filename);
-		size_t updateRecentFilesList(const std::string& entry);
 
 	public:
 		ScoreEditor();
@@ -43,14 +45,14 @@ namespace MikuMikuWorld
 		void reset();
 		void open();
 		void loadScore(std::string filename);
-		void asyncLoadScore(std::string filename);
 		void loadMusic(std::string filename);
 		void asyncLoadMusic(std::string filename);
-		void exportSus();
+		void exportScore();
 		bool saveAs();
 		bool trySave(std::string);
 		void autoSave();
 		int deleteOldAutoSave(int count);
+		size_t updateRecentFilesList(const std::string& entry);
 
 		void drawMenubar();
 		void drawToolbar();
@@ -61,7 +63,10 @@ namespace MikuMikuWorld
 		void importPreset(const std::string& path);
 		void writeSettings();
 		void uninitialize();
+		
 		inline std::string_view getWorkingFilename() const { return context.workingData.filename; }
 		constexpr inline bool isUpToDate() const { return context.upToDate; }
+
+		inline bool isFullScreenPreview() const { return preview.isFullWindow(); }
 	};
 }

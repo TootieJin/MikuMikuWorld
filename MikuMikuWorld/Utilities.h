@@ -1,9 +1,11 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <algorithm>
+
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "ImGui/imgui_internal.h"
 #include <type_traits>
+#include <random>
+#include <string>
+#include <vector>
 
 // Macro to allow usage of flags operators with types enums
 #define DECLARE_ENUM_FLAG_OPERATORS(EnumType) \
@@ -26,7 +28,40 @@ namespace MikuMikuWorld
 		static float centerImGuiItem(const float width);
 		static void ImGuiCenteredText(const std::string& str);
 		static void ImGuiCenteredText(const char* str);
+		static bool ImGuiTextFilterWithHint(ImGuiTextFilter* imguiTextFilter, const char* label, const char* hint, float width);
 	};
+
+	class Random
+	{
+	public:
+		float get(float min, float max);
+		float get();
+
+		void setSeed(int seed);
+
+	private:
+		// multiplier and increment extracted from UnityPlayer.dll
+		std::linear_congruential_engine<uint32_t, 1812433253U, 367, 2147483647> gen;
+		std::uniform_real_distribution<> dist{ 0, 1 };
+	};
+
+	class RandN
+	{
+	public:
+		float nextFloat();
+		float nextFloatRange(float min, float max);
+		uint32_t nextUInt32();
+
+		void setSeed(uint32_t seed);
+
+	private:
+		static const uint32_t MT19937 = 1812433253;
+		uint32_t x{}, y{}, z{}, w{};
+
+		uint32_t xorShift();
+	};
+
+	extern Random globalRandom;
 
 	enum class ResultStatus
 	{

@@ -1,23 +1,20 @@
 #include "SusSerializer.h"
 #include "SusExporter.h"
 #include "SusParser.h"
-#include "ScoreConverter.h"
 #include "SUS.h"
 
 namespace MikuMikuWorld
 {	
 	void SusSerializer::serialize(const Score& score, std::string filename)
 	{
-		SUS sus = ScoreConverter::scoreToSus(score);
-
-		SusExporter exporter{};
-		exporter.dump(sus, filename, exportComment);
+		SUS sus = scoreToSus(score);
+		SusExporter().dump(sus, filename, exportComment);
 	}
 
 	Score SusSerializer::deserialize(std::string filename)
 	{
 		SUS sus = SusParser().parse(filename);
-		return ScoreConverter::susToScore(sus);
+		return susToScore(sus);
 	}
 
 	std::pair<int, int> SusSerializer::barLengthToFraction(float length, float fractionDenom)
@@ -26,7 +23,7 @@ namespace MikuMikuWorld
 		for (int i = 2; i < 10; ++i)
 		{
 			if (fmodf(factor * length, 1) == 0)
-				return std::pair<int, int>(factor * length, pow(2, i));
+				return std::make_pair<int, int>(factor * length, std::pow(2, i));
 
 			factor *= 2;
 		}

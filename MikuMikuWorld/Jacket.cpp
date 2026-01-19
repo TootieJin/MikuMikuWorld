@@ -1,6 +1,5 @@
 #include "Jacket.h"
 #include "ResourceManager.h"
-#include "ImGuiManager.h"
 #include "File.h"
 #include "Math.h"
 #include <algorithm>
@@ -58,7 +57,7 @@ namespace MikuMikuWorld
 
 			ImGui::BeginTooltip();
 			ImGui::GetWindowDrawList()->AddImage(
-				(void*)texture->getID(),
+				(ImTextureID)(size_t)texture->getID(),
 				ImGui::GetWindowPos() + imageOffset,
 				ImGui::GetWindowPos() + imageOffset + imageSize,
 				ImVec2{ 0.0, 0.0f },

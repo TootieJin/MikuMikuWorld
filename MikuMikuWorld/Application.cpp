@@ -1,12 +1,11 @@
 ﻿#include "Application.h"
 #include "ResourceManager.h"
 #include "IO.h"
-#include "Colors.h"
 #include "Utilities.h"
 #include "Localization.h"
 #include "ApplicationConfiguration.h"
 #include "ScoreSerializer.h"
-#include <filesystem>
+#include "NoteSkin.h"
 
 namespace MikuMikuWorld
 {
@@ -14,8 +13,6 @@ namespace MikuMikuWorld
 	std::string Application::appDir{ "" };
 	std::string Application::pendingLoadScoreFile{ "" };
 	WindowState Application::windowState{};
-
-	NoteTextures noteTextures{ -1, -1, -1 };
 
 	Application::Application() : 
 		initialized{ false }, language{ "" }
@@ -77,7 +74,7 @@ namespace MikuMikuWorld
 
 			if (GetFileVersionInfoW(filename, verHandle, verSize, verData))
 			{
-				if (VerQueryValue(verData, "\\", (VOID FAR * FAR*) & lpBuffer, &size))
+				if (VerQueryValue(verData, TEXT("\\"), (VOID FAR * FAR*) & lpBuffer, &size))
 				{
 					if (size)
 					{
@@ -120,6 +117,7 @@ namespace MikuMikuWorld
 		windowState.size = config.windowSize;
 		windowState.maximized = config.maximized;
 		windowState.vsync = config.vsync;
+		windowState.fullScreen = config.fullScreen;
 		UI::accentColors[0] = config.userColor.toImVec4();
 	}
 
@@ -129,6 +127,7 @@ namespace MikuMikuWorld
 		config.vsync = windowState.vsync;
 		config.windowPos = windowState.position;
 		config.windowSize = windowState.size;
+		config.fullScreen = windowState.fullScreen;
 		config.userColor = Color::fromImVec4(UI::accentColors[0]);
 
 		if (editor)
@@ -154,7 +153,7 @@ namespace MikuMikuWorld
 			std::string extension = IO::File::getFileExtension(*it);
 			std::transform(extension.begin(), extension.end(), extension.begin(), tolower);
 
-			if (ScoreSerializer::isSupportedFileFormat(extension))
+			if (ScoreSerializeController::isValidFormat(ScoreSerializeController::toSerializeFormat(*it)))
 				scoreFile = *it;
 			else if (Audio::isSupportedFileFormat(extension))
 				musicFile = *it;
@@ -304,6 +303,26 @@ namespace MikuMikuWorld
 
 		editor->update();
 
+		bool isFullScreen = config.fullScreen;
+		if (ImGui::IsAnyPressed(config.input.toggleFullscreen)) setFullScreen(!isFullScreen);
+
+		if (!editor->isFullScreenPreview())
+		{
+			ImGui::BeginMainMenuBar();
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 2));
+
+			if (ImGui::BeginMenu(getString("window")))
+			{
+				if (ImGui::MenuItem(getString("fullscreen"), ToShortcutString(config.input.toggleFullscreen), &isFullScreen))
+					setFullScreen(isFullScreen);
+
+				ImGui::EndMenu();
+			}
+
+			ImGui::PopStyleVar();
+			ImGui::EndMainMenuBar();
+		}
+
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -317,27 +336,59 @@ namespace MikuMikuWorld
 		ResourceManager::loadShader(appDir + "res\\shaders\\masking");
 		ResourceManager::loadShader(appDir + "res\\shaders\\particles");
 
-		const std::string texturesDir = appDir + "res\\textures\\";
+		// TODO: Do not set the note skin texture indexes manually!
+		const std::string notes01TexDir = appDir + "res\\notes\\01\\";
+		ResourceManager::loadTexture(notes01TexDir + "notes.png");
+		ResourceManager::loadTexture(notes01TexDir + "longNoteLine.png");
+		ResourceManager::loadTexture(notes01TexDir + "touchLine_eff.png");
+		noteSkins.add("Notes 01", 0, 1, 2);
 
-		ResourceManager::loadTexture(texturesDir + "notes1.png", TextureFilterMode::LinearMipMapLinear, TextureFilterMode::Linear);
-		ResourceManager::loadTexture(texturesDir + "longNoteLine.png");
-		ResourceManager::loadTexture(texturesDir + "touchLine_eff.png");
-		ResourceManager::loadTexture(texturesDir + "timeline_tools.png");
-		ResourceManager::loadTexture(texturesDir + "note_stats.png");
-		ResourceManager::loadTexture(texturesDir + "stage.png");
-		ResourceManager::loadTexture(texturesDir + "particles.png");
+		const std::string notes02TexDir = appDir + "res\\notes\\02\\";
+		ResourceManager::loadTexture(notes02TexDir + "notes.png");
+		ResourceManager::loadTexture(notes02TexDir + "longNoteLine.png");
+		ResourceManager::loadTexture(notes02TexDir + "touchLine_eff.png");
+		noteSkins.add("Notes 02", 3, 4, 5);
 
-		ResourceManager::loadTransforms(texturesDir + "transform.txt");
-		ResourceManager::loadParticleEffects(texturesDir + "particles.pte");
+		const std::string editorAssetsDir = appDir + "res\\editor\\";
+		ResourceManager::loadTexture(editorAssetsDir + "timeline_tools.png");
+		ResourceManager::loadTexture(editorAssetsDir + "note_stats.png");
+		ResourceManager::loadTexture(editorAssetsDir + "stage.png");
 
-		// Cache note textures indices
-		noteTextures.notes = ResourceManager::getTexture(NOTES_TEX);
-		noteTextures.holdPath = ResourceManager::getTexture(HOLD_PATH_TEX);
-		noteTextures.touchLine = ResourceManager::getTexture(TOUCH_LINE_TEX);
+		ResourceManager::loadTransforms(appDir + "res\\effect\\transform.txt");
 
 		// Load more languages here
 		Localization::loadDefault();
 		Localization::load("ja", u8"日本語", appDir + "res\\i18n\\ja.csv");
+	}
+
+	void Application::setFullScreen(bool fullScreen)
+	{
+		Application::windowState.fullScreen = config.fullScreen = fullScreen;
+
+		GLFWmonitor* mainMonitor = glfwGetPrimaryMonitor();
+		const GLFWvidmode* mode = glfwGetVideoMode(mainMonitor);
+		if (fullScreen)
+		{
+			if (Application::windowState.maximized)
+				glfwSetWindowAttrib(window, GLFW_MAXIMIZED, GLFW_FALSE);
+
+			glfwSetWindowMonitor(window, mainMonitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+		}
+		else
+		{
+			int width = Application::windowState.maximized ? mode->width : Application::windowState.size.x;
+			int height = Application::windowState.maximized ? mode->height : Application::windowState.size.y;
+
+			glfwSetWindowMonitor(
+				window,
+				NULL,
+				Application::windowState.position.x,
+				Application::windowState.position.y,
+				width,
+				height,
+				mode->refreshRate
+			);
+		}
 	}
 
 	void Application::run()

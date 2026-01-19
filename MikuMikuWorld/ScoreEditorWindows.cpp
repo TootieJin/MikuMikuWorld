@@ -1,10 +1,12 @@
+#include "Application.h"
 #include "ScoreEditorWindows.h"
 #include "UI.h"
 #include "File.h"
 #include "Constants.h"
 #include "Utilities.h"
-#include "Application.h"
+#include "ImGui/imgui_stdlib.h"
 #include "ApplicationConfiguration.h"
+#include "NoteSkin.h"
 #include "ResourceManager.h"
 
 namespace MikuMikuWorld
@@ -22,7 +24,7 @@ namespace MikuMikuWorld
 				const Sprite& spr = tex.sprites[scoreStatsImages[row]];
 				ImVec2 uv0{ spr.getX1() / tex.getWidth(), spr.getY1() / tex.getHeight() };
 				ImVec2 uv1{ spr.getX2() / tex.getWidth(), spr.getY2() / tex.getHeight() };
-				ImGui::Image((void*)tex.getID(), { 20, 20 }, uv0, uv1);
+				ImGui::Image((ImTextureID)(size_t)tex.getID(), { 20, 20 }, uv0, uv1);
 			}
 			else
 			{
@@ -215,7 +217,7 @@ namespace MikuMikuWorld
 			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
 			float filterWidth = ImGui::GetContentRegionAvail().x - UI::btnSmall.x - 2;
 
-			presetFilter.Draw("##preset_filter", IO::concat(ICON_FA_SEARCH, getString("search"), " ").c_str(), filterWidth);
+			Utilities::ImGuiTextFilterWithHint(&presetFilter, "##preset_filter", IO::concat(ICON_FA_SEARCH, getString("search"), " ").c_str(), filterWidth);
 			ImGui::SameLine();
 			if (ImGui::Button(ICON_FA_TIMES, UI::btnSmall))
 				presetFilter.Clear();
@@ -643,7 +645,7 @@ namespace MikuMikuWorld
 
 		constexpr ImGuiSelectableFlags selectionFlags =
 			ImGuiSelectableFlags_SpanAllColumns |
-			ImGuiSelectableFlags_AllowItemOverlap;
+			ImGuiSelectableFlags_AllowOverlap;
 
 		const int rowHeight = ImGui::GetFrameHeight() + 5;
 
@@ -769,20 +771,29 @@ namespace MikuMikuWorld
 			{
 				for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_MouseLeft; ++key)
 				{
-					bool isCtrl = key == ImGuiKey_LeftCtrl || key == ImGuiKey_RightCtrl || key == ImGuiKey_ModCtrl;
-					bool isShift = key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift || key == ImGuiKey_ModShift;
-					bool isAlt = key == ImGuiKey_LeftAlt || key == ImGuiKey_RightAlt || key == ImGuiKey_ModAlt;
-					bool isSuper = key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper || key == ImGuiKey_ModSuper;
+					bool isCtrl = key == ImGuiKey_LeftCtrl || key == ImGuiKey_RightCtrl || key == ImGuiMod_Ctrl;
+					bool isShift = key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift || key == ImGuiMod_Shift;
+					bool isAlt = key == ImGuiKey_LeftAlt || key == ImGuiKey_RightAlt || key == ImGuiMod_Alt;
+					bool isSuper = key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper || key == ImGuiMod_Super;
 
 					// execute if a non-modifier key is tapped
 					if (ImGui::IsKeyPressed((ImGuiKey)key) && !isCtrl && !isShift && !isAlt && !isSuper)
 					{
-						bindings[selectedBindingIndex]->bindings[editBindingIndex] = InputBinding((ImGuiKey)key, (ImGuiModFlags_)ImGui::GetIO().KeyMods);
+						bindings[selectedBindingIndex]->bindings[editBindingIndex] = InputBinding((ImGuiKey)key, (ImGuiKey)ImGui::GetIO().KeyMods);
 						listeningForInput = false;
 						editBindingIndex = -1;
 					}
 				}
 			}
+		}
+	}
+
+	void SettingsWindow::setEffectsProfile(int profile)
+	{
+		if (profile != config.pvEffectsProfile && profile >= 0 && profile <= 1)
+		{
+			isEffectProfileChangePending = true;
+			config.pvEffectsProfile = profile;
 		}
 	}
 
@@ -1006,7 +1017,8 @@ namespace MikuMikuWorld
 					{
 						UI::beginPropertyColumns();
 						UI::addSliderProperty(getString("notes_speed"), config.pvNoteSpeed, 1, 12, "%.2f");
-						UI::addCheckboxProperty(getString("mirror_score"), config.pvMirrorScore);						
+						UI::addCheckboxProperty(getString("mirror_score"), config.pvMirrorScore);
+						UI::addCheckboxProperty(getString("preview_draw_toolbar"), config.pvDrawToolbar);
 						UI::endPropertyColumns();
 					}
 
@@ -1036,7 +1048,7 @@ namespace MikuMikuWorld
 							}
 						}
 
-						UI::addPercentSliderProperty(getString("background_brightnes"), config.backgroundBrightness);
+						UI::addPercentSliderProperty(getString("background_brightnes"), config.pvBackgroundBrightness);
 						ImGui::Separator();
 
 						UI::addPercentSliderProperty(getString("stage_opacity"), config.pvStageOpacity);
@@ -1044,21 +1056,54 @@ namespace MikuMikuWorld
 						UI::addCheckboxProperty(getString("stage_lock_ratio"), config.pvLockAspectRatio);
 						UI::endPropertyColumns();
 					}
+
+					if (ImGui::CollapsingHeader(getString("audio"), ImGuiTreeNodeFlags_DefaultOpen))
+					{
+						UI::beginPropertyColumns();
+						UI::addSelectProperty(getString("notes_se"), config.seProfileIndex, Audio::soundEffectsProfileNames, Audio::soundEffectsProfileCount);
+						UI::endPropertyColumns();
+					}
 					
 					if (ImGui::CollapsingHeader(getString("visuals"), ImGuiTreeNodeFlags_DefaultOpen))
 					{
+						const std::vector<std::string>& noteSkinNames = noteSkins.getSkinNames();
+
+						ImGui::Text(getString("notes_skin"));
+						if (noteSkins.count() > 1)
+						{
+							if (ImGui::RadioButton(getString(noteSkinNames[0]), config.notesSkin == 0))
+								config.notesSkin = 0;
+
+							const char* noteSkinName1 = getString(noteSkinNames[1]);
+							ImGui::SameLine();
+							if (ImGui::RadioButton(noteSkinName1, config.notesSkin == 1))
+								config.notesSkin = 1;
+						}
+
+						ImGui::Text(getString("notes_effect"));
+						if (ImGui::RadioButton(getString("effects_normal"), config.pvEffectsProfile == 0))
+							setEffectsProfile(0);
+
+						ImGui::SameLine();
+						std::string effectsLiteKey = "effects_reduced";
+						const char* effectsLiteString = getString(effectsLiteKey);
+						ImGui::SameLine();
+						if (ImGui::RadioButton(effectsLiteString, config.pvEffectsProfile == 1))
+							setEffectsProfile(1);
+
 						UI::beginPropertyColumns();
 						UI::addCheckboxProperty(getString("flicks_animation"), config.pvFlickAnimation);
 						UI::addCheckboxProperty(getString("holds_animation"), config.pvHoldAnimation);
 						UI::addCheckboxProperty(getString("simultaneous_lines"), config.pvSimultaneousLine);
-						UI::addCheckboxProperty(getString("notes_effect"), config.pvNoteEffect);
-						UI::addCheckboxProperty(getString("notes_slot_effect"), config.pvNoteGlow);
-						UI::addCheckboxProperty(getString("lanes_effect"), config.pvLaneEffect);
 						ImGui::Separator();
 
 						float hold_alpha = config.pvHoldAlpha * 100.f;
 						UI::addSliderProperty(getString("holds_alpha"), hold_alpha, 10, 100, "%.0f%%");
 						config.pvHoldAlpha = hold_alpha / 100.f;
+
+						float guide_alpha = config.pvGuideAlpha * 100.f;
+						UI::addSliderProperty(getString("guides_alpha"), guide_alpha, 10, 100, "%.0f%%");
+						config.pvGuideAlpha = guide_alpha / 100.f;
 						
 						UI::endPropertyColumns();
 					}

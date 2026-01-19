@@ -27,7 +27,7 @@ namespace MikuMikuWorld
 		configFilename = Application::getAppDir() + IMGUI_CONFIG_FILENAME;
 
 		ImGuiIO& io = ImGui::GetIO();
-		io.ConfigFlags |= 
+		io.ConfigFlags |=
 			ImGuiConfigFlags_DockingEnable |
 			ImGuiConfigFlags_ViewportsEnable |
 			ImGuiConfigFlags_DpiEnableScaleViewports;
@@ -35,6 +35,7 @@ namespace MikuMikuWorld
 		io.ConfigWindowsMoveFromTitleBarOnly = true;
 		io.ConfigViewportsNoDefaultParent = false;
 		io.ConfigViewportsNoAutoMerge = true;
+		io.ConfigDebugHighlightIdConflicts = false;
 		io.IniFilename = configFilename.c_str();
 
 		if (!ImGui_ImplGlfw_InitForOpenGL(window, true))
@@ -205,7 +206,7 @@ namespace MikuMikuWorld
 		fontConfig.GlyphMinAdvanceX = 13.0f;
 		fontConfig.PixelSnapH = false;
 		fontConfig.OversampleH = 1;
-		static const ImWchar iconRanges[] = { start, end, 0 };
+		static const ImWchar iconRanges[] = { (ImWchar)start, (ImWchar)end, 0 };
 		ImGui::GetIO().Fonts->AddFontFromFileTTF(filename.c_str(), (int)size, &fontConfig, iconRanges);
 	}
 
@@ -220,7 +221,6 @@ namespace MikuMikuWorld
 
 		loadFont(Application::getAppDir() + "res/fonts/NotoSansCJK-Regular.ttc", 16 * dpiScale);
 		loadIconFont(Application::getAppDir() + "res/fonts/fa-solid-900.ttf", ICON_MIN_FA, ICON_MAX_FA, 12 * dpiScale);
-		ImGui_ImplOpenGL3_CreateFontsTexture();
 	}
 
 	void ImGuiManager::initializeLayout()

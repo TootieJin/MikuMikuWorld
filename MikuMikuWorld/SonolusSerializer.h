@@ -1,135 +1,80 @@
 #pragma once
 #include "ScoreSerializer.h"
+#include "Sonolus.h"
+#include "Constants.h"
 #include <string>
-#include "JsonIO.h"
-#include "json.hpp"
-
-using json = nlohmann::json;
+#include <memory>
 
 namespace MikuMikuWorld
 {
-	enum class DataValueType : uint8_t
-	{
-		Value, Ref
-	};
-
-	enum class NumberType
-	{
-		Integer,
-		Float
-	};
-
-	union Number
-	{
-		int intValue;
-		float floatValue;
-	};
-
-	class DataValue
-	{
-	public:
-		inline std::string getName() const { return mName; }
-		inline float getFloatValue() const { return mValue.floatValue; }
-		inline int getIntValue() const { return mValue.intValue; }
-		inline std::string getRef() const { return mRef; }
-		inline DataValueType getType() const { return mType; }
-		inline NumberType getNumType() const { return mNumType; }
-
-		DataValue(std::string name, float v) : mType{ DataValueType::Value }, mNumType{ NumberType::Float }, mName{ name }
-		{
-			mValue.floatValue = v;
-		}
-
-		explicit DataValue(std::string name, int v) : mType{ DataValueType::Value }, mNumType{ NumberType::Integer }, mName{ name }
-		{
-			mValue.intValue = v;
-		}
-
-		DataValue(std::string name, std::string r) : mType{ DataValueType::Ref }, mName{ name }, mRef { r }
-		{
-		}
-
-	private:
-		std::string mName;
-		DataValueType mType;
-		NumberType mNumType;
-		Number mValue;
-		std::string mRef;
-	};
-
-	struct ArchetypeData
-	{
-		std::string name;
-		std::string archetype;
-		std::vector<DataValue> data;
-	};
-
-	struct SlideConnection
-	{
-		std::string head;
-		std::string tail;
-		int ease;
-		bool active;
-		bool critical;
-	};
-
-	void to_json(json& j, const ArchetypeData& data);
-
+	class SonolusEngine; // Forward declaration
     class SonolusSerializer : public ScoreSerializer
     {
     public:
         void serialize(const Score& score, std::string filename) override;
         Score deserialize(std::string filename) override;
 
-		SonolusSerializer(bool prettyDump, bool gzip) : prettyDump{ prettyDump }, useGzip{ gzip }
+		SonolusSerializer(std::unique_ptr<SonolusEngine>&& engine, bool compressData = true, bool prettyDump = false)
+			: engine(std::move(engine)), compressData(compressData), prettyDump(prettyDump)
 		{
 
 		}
 
 	private:
+		std::unique_ptr<SonolusEngine> engine;
+		bool compressData;
 		bool prettyDump;
-		bool useGzip;
-
-		float ticksToBeats(int ticks);
-		float toSonolusLane(int lane, int width);
-		int flickToDirection(FlickType flick);
-		int toSonolusEase(EaseType ease);
-
-		int beatsToTicks(float beats);
-		int toNativeLane(float lane, float width);
-		FlickType directionToFlick(int direction);
-		EaseType toNativeEase(int ease);
-
-		json getEntitiesByArchetype(const json& j, const std::string& archetype);
-		json getEntitiesByArchetypeEndingWith(const json& j, const std::string& archetype);
-		std::string getSlideConnectorId(const HoldStep& step);
-		std::string noteToArchetype(const Score& score, const Note& note);
-		std::map<int, std::vector<Note>> buildTickNoteMap(const Score& score);
-
-		std::string getSlideConnectorArchetype(const Score& score, const HoldNote& hold);
-		std::string getParentSlideConnector(const std::unordered_map<std::string, std::string>& connections, const std::string& slideKey);
-		std::string getLastSlideConnector(const std::unordered_map<std::string, SlideConnection>& connections, const std::string& slideKey);
-
-		Note createNote(const json& entity, NoteType type);
-		NoteType getNoteTypeFromArchetype(const std::string& archetype);
-
-		template<typename T>
-		T getEntityDataOrDefault(const json& data, const std::string& name, const T& def)
-		{
-			auto it = std::find_if(data.begin(), data.end(),
-				[&name](const auto& entry) { return jsonIO::tryGetValue<std::string>(entry, "name", "") == name; });
-
-			if (it != data.end())
-			{
-				if constexpr (std::is_same_v<T, std::string>)
-					return jsonIO::tryGetValue<std::string>(it.value(), "ref", def);
-				else
-					return jsonIO::tryGetValue<float>(it.value(), "value", def);
-			}
-
-			return def;
-		}
     };
+
+	class SonolusEngine
+	{
+	protected:
+		using IntegerType = Sonolus::LevelDataEntity::IntegerType;
+		using RealType = Sonolus::LevelDataEntity::RealType;
+		using RefType = Sonolus::LevelDataEntity::RefType;
+		using FuncRef = std::function<RefType(void)>;
+		using TickType = decltype(Note::tick);
+
+		static double toBgmOffset(float musicOffset);
+		static Sonolus::LevelDataEntity toBpmChangeEntity(const Tempo& tempo);
+		static RealType ticksToBeats(TickType ticks, TickType beatTicks = TICKS_PER_BEAT);
+		static RealType widthToSize(int width);
+		static RealType toSonolusLane(int lane, int width);
+
+		static float fromBgmOffset(double bgmOffset);
+		static bool fromBpmChangeEntity(const Sonolus::LevelDataEntity& bpmChangeEntity, Tempo& tempo);
+		static TickType beatsToTicks(RealType beats, TickType beatTicks = TICKS_PER_BEAT);
+		static int sizeToWidth(RealType size);
+		static int toNativeLane(RealType lane, RealType size);
+
+		static bool isValidNoteState(const Note& note);
+		static bool isValidHoldNotes(const std::vector<Note>& holdNotes);
+
+		static std::string getTapNoteArchetype(const Note& note);
+	public:
+		virtual Sonolus::LevelData serialize(const Score& score) = 0;
+		virtual Score deserialize(const Sonolus::LevelData& levelData) = 0;
+
+		// virtual ~SonolusEngine() = default;
+	};
+
+	class PySekaiEngine : public SonolusEngine
+	{
+	public:
+		Sonolus::LevelData serialize(const Score& score) override;
+		Score deserialize(const Sonolus::LevelData& levelData) override;
+
+	private:
+		static Sonolus::LevelDataEntity toSpeedChangeEntity(const HiSpeedChange& hispeed, const RefType& groupName);
+		static Sonolus::LevelDataEntity toNoteEntity(
+			const Note& note, const std::string& archetype, const RefType& groupName,
+			HoldNoteType holdType = HoldNoteType::Normal, HoldStepType stepType = HoldStepType::Normal, EaseType easing = EaseType::Linear, bool isGuide = false, double alpha = 1.0
+		);
+		static Sonolus::LevelDataEntity toConnector(const HoldNote& hold, const RefType& head, const RefType& tail, const RefType& segmentHead, const RefType& segmentTail);
+		static std::string getHoldNoteArchetype(const Note& note, const HoldNote& holdNote);
+		static void insertTransientTickNote(const Sonolus::LevelDataEntity& head, const Sonolus::LevelDataEntity& tail, bool isHead, std::vector<Sonolus::LevelDataEntity>& entities);
+		static int toDirectionNumeric(FlickType flick);
+		static int toEaseNumeric(EaseType ease);
+		static int toKindNumeric(bool critical = false, HoldNoteType holdType = HoldNoteType::Normal);
+	};
 }
-
-

@@ -15,6 +15,7 @@ edit, 編集
 undo, 元に戻す
 redo, やり直す
 select_all, 全て選択
+insert_skill, スキル発動を挿入
 view, 表示
 show_step_outlines, 中継点に枠線を表示
 hide_step_outlines_in_playback, 再生中に中継点を隠す
@@ -27,6 +28,7 @@ settings, 設定
 window, ウィンドウ
 vsync, VSync（垂直同期）
 show_fps, FPS情報を表示
+fullscreen, 全画面
 debug, デバッグ
 create_auto_save, オートセーブを実行
 help, ヘルプ
@@ -46,8 +48,15 @@ save_changes, 保存する
 discard_changes, 保存しない
 score_file, 譜面ファイル
 export_successful, エクスポートが完了しました
+unknown_file_format, 不明なファイル形式
+open_as_file_format, 開こうとしているファイルのフォーマットを選択してください。
+export_as_file_format, エクスポートするフォーマットを選択してください。
 error, エラー
+error_reason, 理由
+error_open_file_msg1, ファイル
+error_open_file_msg2, を開けません
 error_load_score_file, 譜面ファイルの読み込み中にエラーが発生しました
+error_save_score_file, 譜面ファイルの保存中にエラーが発生しました
 error_load_music_file, 音楽ファイルの読み込みに失敗しました
 cancel, キャンセル
 general, 一般
@@ -69,7 +78,7 @@ theme_dark, ダーク
 custom_color, カスタム色
 timeline, タイムライン
 preview, プレビュー
-match_timeline_size_to_screen, タイムラインの広さを画面の広さに合わせる
+match_timeline_size_to_window, タイムラインの広さを画面の広さに合わせる
 match_notes_size_to_timeline, ノーツの高さをレーンの幅に合わせる
 lane_width, レーンの幅
 notes_height, ノーツの高さ
@@ -90,18 +99,24 @@ video, 画面
 vsync_enable, VSync（垂直同期）
 notes_se, ノーツのSE
 visuals, ビジュアル
+preview_draw_toolbar, プレビューツールバーを描く
 notes_speed, ノーツの速さ
 mirror_score, ミラー譜面
 flicks_animation, マーカーのアニメーション
 holds_animation, ロングノーツのアニメーション
 simultaneous_lines, 同時押しライン
 notes_effect, ノーツエフェクト
-notes_slot_effect, ノーツスロットエフェクト
-lanes_effect, レーンエフェクト
+effects_normal, 通常
+effects_reduced, 控えめ
 holds_alpha, ロングノーツの不透明度
+guides_alpha, ガイドノーツの不透明度
 stage_opacity, ステージの不透明度
 stage_cover, ステージカバー（縦方向）
 stage_lock_ratio, ステージのアスペクト比を維持
+notes_skin, ノーツスキン
+select_engine, エンジンを選択
+compress, 圧縮
+score_partially_missing, 譜面の一部が欠落している可能性があります
 
 # score editor
 options, オプション
@@ -183,6 +198,7 @@ edit_skill, スキル発動を編集
 edit_fever,　FEVER発動を編集
 edit_none,　編集
 edit_event,　イベントを編集
+fullscreen_preview, 全画面プレビュー
 
 # preset manager
 presets, プリセット

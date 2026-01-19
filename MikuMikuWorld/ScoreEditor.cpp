@@ -1,15 +1,12 @@
 #include "Application.h"
 #include "ApplicationConfiguration.h"
 #include "File.h"
-#include "SUS.h"
-#include "SusExporter.h"
-#include "SusParser.h"
-#include "ScoreConverter.h"
 #include "UI.h"
 #include "Constants.h"
 #include "Utilities.h"
 #include "ImageCrop.h"
-#include "ScoreSerializer.h"
+#include "NativeScoreSerializer.h"
+#include "ScoreSerializeWindow.h"
 #include <filesystem>
 #include <Windows.h>
 
@@ -27,7 +24,7 @@ namespace MikuMikuWorld
 		&config.input.timelineGuide,
 		&config.input.timelineBpm,
 		&config.input.timelineTimeSignature,
-		&config.input.timelineHiSpeed,
+		&config.input.timelineHiSpeed
 	};
 
 	ScoreEditor::ScoreEditor() : presetManager(Application::getAppDir() + "library")
@@ -46,6 +43,8 @@ namespace MikuMikuWorld
 
 		autoSavePath = Application::getAppDir() + "auto_save";
 		autoSaveTimer.reset();
+
+		preview.loadNoteEffects(context.scorePreviewDrawData.effectView);
 	}
 
 	void ScoreEditor::writeSettings()
@@ -66,8 +65,11 @@ namespace MikuMikuWorld
 
 	void ScoreEditor::update()
 	{
-		drawMenubar();
-		drawToolbar();
+		if (!isFullScreenPreview())
+		{
+			drawMenubar();
+			drawToolbar();
+		}
 
 		if (!ImGui::GetIO().WantCaptureKeyboard)
 		{
@@ -82,32 +84,39 @@ namespace MikuMikuWorld
 			if (ImGui::IsAnyPressed(config.input.openHelp)) help();
 			if (ImGui::IsAnyPressed(config.input.save)) trySave(context.workingData.filename);
 			if (ImGui::IsAnyPressed(config.input.saveAs)) saveAs();
-			if (ImGui::IsAnyPressed(config.input.exportSus)) exportSus();
+			if (ImGui::IsAnyPressed(config.input.exportScore)) exportScore();
 			if (ImGui::IsAnyPressed(config.input.togglePlayback)) timeline.setPlaying(context, !timeline.isPlaying());
 			if (ImGui::IsAnyPressed(config.input.stop)) timeline.stop(context);
 			if (ImGui::IsAnyPressed(config.input.previousTick, true)) timeline.previousTick(context);
 			if (ImGui::IsAnyPressed(config.input.nextTick, true)) timeline.nextTick(context);
-			if (ImGui::IsAnyPressed(config.input.selectAll)) context.selectAll();
-			if (ImGui::IsAnyPressed(config.input.deleteSelection)) context.deleteSelection();
-			if (ImGui::IsAnyPressed(config.input.cutSelection)) context.cutSelection();
-			if (ImGui::IsAnyPressed(config.input.copySelection)) context.copySelection();
-			if (ImGui::IsAnyPressed(config.input.paste)) context.paste(false);
-			if (ImGui::IsAnyPressed(config.input.flipPaste)) context.paste(true);
-			if (ImGui::IsAnyPressed(config.input.cancelPaste)) context.cancelPaste();
-			if (ImGui::IsAnyPressed(config.input.flip)) context.flipSelection();
-			if (ImGui::IsAnyPressed(config.input.undo)) context.undo();
-			if (ImGui::IsAnyPressed(config.input.redo)) context.redo();
-			if (ImGui::IsAnyPressed(config.input.zoomOut, true)) timeline.setZoom(timeline.getZoom() - 0.25f);
-			if (ImGui::IsAnyPressed(config.input.zoomIn, true)) timeline.setZoom(timeline.getZoom() + 0.25f);
-			if (ImGui::IsAnyPressed(config.input.decreaseNoteSize, true)) edit.noteWidth = std::clamp(edit.noteWidth - 1, MIN_NOTE_WIDTH, MAX_NOTE_WIDTH);
-			if (ImGui::IsAnyPressed(config.input.increaseNoteSize, true)) edit.noteWidth = std::clamp(edit.noteWidth + 1, MIN_NOTE_WIDTH, MAX_NOTE_WIDTH);
-			if (ImGui::IsAnyPressed(config.input.shrinkDown)) context.shrinkSelection(Direction::Down);
-			if (ImGui::IsAnyPressed(config.input.shrinkUp)) context.shrinkSelection(Direction::Up);
-			if (ImGui::IsAnyPressed(config.input.connectHolds)) context.connectHoldsInSelection();
-			if (ImGui::IsAnyPressed(config.input.splitHold)) context.splitHoldInSelection();
+			if (ImGui::IsAnyPressed(config.input.togglePreviewFullWindow, false)) preview.setFullWindow(!preview.isFullWindow());
 
-			for (int i = 0; i < (int)TimelineMode::TimelineModeMax; ++i)
-				if (ImGui::IsAnyPressed(*timelineModeBindings[i])) timeline.changeMode((TimelineMode)i, edit);
+			if (!preview.isFullWindow())
+			{
+				if (ImGui::IsAnyPressed(config.input.selectAll)) context.selectAll();
+				if (ImGui::IsAnyPressed(config.input.deleteSelection)) context.deleteSelection();
+				if (ImGui::IsAnyPressed(config.input.cutSelection)) context.cutSelection();
+				if (ImGui::IsAnyPressed(config.input.copySelection)) context.copySelection();
+				if (ImGui::IsAnyPressed(config.input.paste)) context.paste(false);
+				if (ImGui::IsAnyPressed(config.input.flipPaste)) context.paste(true);
+				if (ImGui::IsAnyPressed(config.input.cancelPaste)) context.cancelPaste();
+				if (ImGui::IsAnyPressed(config.input.flip)) context.flipSelection();
+				if (ImGui::IsAnyPressed(config.input.undo)) context.undo();
+				if (ImGui::IsAnyPressed(config.input.redo)) context.redo();
+				if (ImGui::IsAnyPressed(config.input.zoomOut, true)) timeline.setZoom(timeline.getZoom() - 0.25f);
+				if (ImGui::IsAnyPressed(config.input.zoomIn, true)) timeline.setZoom(timeline.getZoom() + 0.25f);
+				if (ImGui::IsAnyPressed(config.input.decreaseNoteSize, true)) edit.noteWidth = std::clamp(edit.noteWidth - 1, MIN_NOTE_WIDTH, MAX_NOTE_WIDTH);
+				if (ImGui::IsAnyPressed(config.input.increaseNoteSize, true)) edit.noteWidth = std::clamp(edit.noteWidth + 1, MIN_NOTE_WIDTH, MAX_NOTE_WIDTH);
+				if (ImGui::IsAnyPressed(config.input.shrinkDown)) context.shrinkSelection(Direction::Down);
+				if (ImGui::IsAnyPressed(config.input.shrinkUp)) context.shrinkSelection(Direction::Up);
+				if (ImGui::IsAnyPressed(config.input.connectHolds)) context.connectHoldsInSelection();
+				if (ImGui::IsAnyPressed(config.input.splitHold)) context.splitHoldInSelection();
+
+				for (int i = 0; i < (int)TimelineMode::TimelineModeMax; ++i)
+					if (ImGui::IsAnyPressed(*timelineModeBindings[i])) timeline.changeMode((TimelineMode)i, edit);
+
+				if (ImGui::IsAnyPressed(config.input.insertSkill)) timeline.insertSkill(context, context.currentTick);
+			}
 		}
 
 		if (config.matchTimelineSizeToScreen)
@@ -127,7 +136,7 @@ namespace MikuMikuWorld
 
 		if (settingsWindow.isBackgroundChangePending)
 		{
-			static const std::string defaultBackgroundPath = Application::getAppDir() + "res\\textures\\default.png";
+			static const std::string defaultBackgroundPath = Application::getAppDir() + "res\\editor\\default.png";
 			timeline.background.load(config.backgroundImage.empty() ? defaultBackgroundPath : config.backgroundImage);
 			settingsWindow.isBackgroundChangePending = false;
 		}
@@ -136,6 +145,12 @@ namespace MikuMikuWorld
 		{
 			context.audio.stopSoundEffects(false);
 			context.audio.setSoundEffectsProfileIndex(config.seProfileIndex);
+		}
+
+		if (settingsWindow.isEffectProfileChangePending)
+		{
+			preview.loadNoteEffects(context.scorePreviewDrawData.effectView);
+			settingsWindow.isEffectProfileChangePending = false;
 		}
 
 		if (propertiesWindow.isPendingLoadMusic)
@@ -159,6 +174,7 @@ namespace MikuMikuWorld
 
 		settingsWindow.update();
 		aboutDialog.update();
+		serializeWindow.update(*this, context, timeline);
 
 		const bool timeline_just_created = (ImGui::FindWindowByName("###notes_timeline") == NULL);
 		ImGui::Begin(IMGUI_TITLE(ICON_FA_MUSIC, "notes_timeline"), NULL, ImGuiWindowFlags_Static | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -166,8 +182,31 @@ namespace MikuMikuWorld
 		timeline.update(context, edit, renderer.get());
 		ImGui::End();
 
+		ImGuiWindowFlags previewWindowFlags =
+			ImGuiWindowFlags_NoCollapse |
+			ImGuiWindowFlags_NoScrollbar |
+			ImGuiWindowFlags_NoScrollWithMouse;
+
 		ImGui::SetNextWindowDockID(dockId, ImGuiCond_FirstUseEver);
-		ImGui::Begin(IMGUI_TITLE(ICON_FA_OBJECT_GROUP, "score_preview"), NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		if (isFullScreenPreview())
+		{
+			ImGuiViewport* viewport = ImGui::GetMainViewport();
+			ImGui::SetNextWindowPos(viewport->WorkPos);
+			ImGui::SetNextWindowSize(viewport->WorkSize);
+			ImGui::SetNextWindowViewport(viewport->ID);
+			previewWindowFlags |= ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize;
+
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
+
+			ImGui::Begin(IMGUI_TITLE(ICON_FA_OBJECT_GROUP, "score_preview_full"), NULL, previewWindowFlags);
+			ImGui::PopStyleVar(2);
+		}
+		else
+		{
+			ImGui::Begin(IMGUI_TITLE(ICON_FA_OBJECT_GROUP, "score_preview"), NULL, previewWindowFlags);
+		}
+
 		preview.update(context, renderer.get());
 		preview.updateUI(timeline, context);
 		ImGui::End();
@@ -177,6 +216,7 @@ namespace MikuMikuWorld
 		if (config.debugEnabled)
 		{
 			debugWindow.update(context, timeline);
+			debugEffectView.update(renderer.get());
 		}
 
 		if (ImGui::Begin(IMGUI_TITLE(ICON_FA_ALIGN_LEFT, "chart_properties"), NULL, ImGuiWindowFlags_Static))
@@ -242,65 +282,8 @@ namespace MikuMikuWorld
 		if (!IO::File::exists(filename))
 			return;
 
-		std::string extension = IO::File::getFileExtension(filename);
-		std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-
-		// Backup next note ID in case of an import failure
-		int nextIdBackup = nextID;
-		try
-		{
-			resetNextID();
-			std::string workingFilename;
-			Score newScore;
-
-			timeline.setPlaying(context, false);
-			
-			std::unique_ptr<ScoreSerializer> serializer = ScoreSerializerFactory::getSerializer(extension);
-			newScore = serializer->deserialize(filename);
-			
-			if (ScoreSerializerFactory::isNativeScoreFormat(extension))
-			{
-				workingFilename = filename;
-			}
-
-			context.clearSelection();
-			context.history.clear();
-			context.score = std::move(newScore);
-			context.workingData = EditorScoreData(context.score.metadata, workingFilename);
-
-			asyncLoadMusic(context.workingData.musicFilename);
-			context.audio.setMusicOffset(0, context.workingData.musicOffset);
-
-			context.scoreStats.calculateStats(context.score);
-			context.scorePreviewDrawData.calculateDrawData(context.score);
-			timeline.calculateMaxOffsetFromScore(context.score);
-
-			UI::setWindowTitle((context.workingData.filename.size() ? IO::File::getFilename(context.workingData.filename) : windowUntitled));
-			context.upToDate = true;
-		}
-		catch (std::exception& error)
-		{
-			nextID = nextIdBackup;
-			std::string errorMessage = IO::formatString("%s\n%s: %s\n%s: %s",
-				getString("error_load_score_file"),
-				getString("score_file"),
-				filename.c_str(),
-				getString("error"),
-				error.what()
-			);
-
-			IO::messageBox(APP_NAME, errorMessage, IO::MessageBoxButtons::Ok, IO::MessageBoxIcon::Error, Application::windowState.windowHandle);
-		}
-
-		updateRecentFilesList(filename);
-	}
-
-	void ScoreEditor::asyncLoadScore(std::string filename)
-	{
-		if (loadScoreFuture.valid())
-			loadScoreFuture.get();
-
-		loadScoreFuture = std::async(std::launch::async, &ScoreEditor::loadScore, this, filename);
+		timeline.setPlaying(context, false);
+		serializeWindow.deserialize(filename);
 	}
 
 	void ScoreEditor::loadMusic(std::string filename)
@@ -355,7 +338,13 @@ namespace MikuMikuWorld
 		IO::FileDialog fileDialog{};
 		fileDialog.parentWindowHandle = Application::windowState.windowHandle;
 		fileDialog.title = "Open Chart";
-		fileDialog.filters = { { "Score Files", "*.mmws;*.sus;*.usc" } };
+		fileDialog.filters = {
+			IO::combineFilters("All Supported Files",{ IO::mmwsFilter, IO::susFilter }),
+			IO::mmwsFilter,
+			IO::susFilter,
+			// IO::lvlDatFilter, // Temporarily disable openning lvldata format
+			IO::allFilter
+		};
 		
 		if (fileDialog.openFile() == IO::FileDialogResult::OK)
 			loadScore(fileDialog.outputFilename);
@@ -371,7 +360,7 @@ namespace MikuMikuWorld
 		try
 		{
 			context.score.metadata = context.workingData.toScoreMetadata();
-			serializeScore(context.score, filename);
+			NativeScoreSerializer().serialize(context.score, filename);
 
 			UI::setWindowTitle(IO::File::getFilename(filename));
 			context.upToDate = true;
@@ -380,7 +369,7 @@ namespace MikuMikuWorld
 		{
 			IO::messageBox(
 				APP_NAME,
-				IO::formatString("An error occured while saving the score file\n%s", err.what()),
+				IO::formatString("%s\n%s: %s", getString("error_save_score_file"), getString("error"), err.what()),
 				IO::MessageBoxButtons::Ok,
 				IO::MessageBoxIcon::Error,
 				Application::windowState.windowHandle
@@ -414,51 +403,9 @@ namespace MikuMikuWorld
 		return false;
 	}
 
-	void ScoreEditor::exportSus()
+	void ScoreEditor::exportScore()
 	{
-		constexpr const char* exportExtensions[] = { "sus", "usc" };
-		int filterIndex = std::clamp(config.lastSelectedExportIndex, 0, static_cast<int>(arrayLength(exportExtensions) - 1));
-
-		IO::FileDialog fileDialog{};
-		fileDialog.title = "Export Chart";
-		fileDialog.filters = { IO::susFilter, IO::uscFilter };
-		fileDialog.filterIndex = filterIndex;
-		fileDialog.defaultExtension = exportExtensions[filterIndex];
-		fileDialog.parentWindowHandle = Application::windowState.windowHandle;
-
-		if (fileDialog.saveFile() == IO::FileDialogResult::OK)
-		{
-			try
-			{
-				Score exportScore = context.score;
-				exportScore.metadata = context.workingData.toScoreMetadata();
-
-				std::string extension = IO::File::getFileExtension(fileDialog.outputFilename);
-				std::unique_ptr<ScoreSerializer> serializer = ScoreSerializerFactory::getSerializer(extension);
-
-				serializer->serialize(exportScore, fileDialog.outputFilename);
-
-				IO::messageBox(
-					APP_NAME,
-					IO::formatString(getString("export_successful")),
-					IO::MessageBoxButtons::Ok,
-					IO::MessageBoxIcon::Information,
-					Application::windowState.windowHandle
-				);
-			}
-			catch (const std::exception& err)
-			{
-				IO::messageBox(
-					APP_NAME,
-					IO::formatString("An error occured while exporting the score file\n%s", err.what()),
-					IO::MessageBoxButtons::Ok,
-					IO::MessageBoxIcon::Error,
-					Application::windowState.windowHandle
-				);
-			}
-
-			config.lastSelectedExportIndex = fileDialog.filterIndex;
-		}
+		serializeWindow.serialize(context);
 	}
 
 	void ScoreEditor::drawMenubar()
@@ -512,11 +459,11 @@ namespace MikuMikuWorld
 			if (ImGui::MenuItem(getString("save_as"), ToShortcutString(config.input.saveAs)))
 				saveAs();
 
-			if (ImGui::MenuItem(getString("export"), ToShortcutString(config.input.exportSus)))
-				exportSus();
+			if (ImGui::MenuItem(getString("export"), ToShortcutString(config.input.exportScore)))
+				exportScore();
 
 			ImGui::Separator();
-			if (ImGui::MenuItem(getString("exit"), ToShortcutString(ImGuiKey_F4, ImGuiModFlags_Alt)))
+			if (ImGui::MenuItem(getString("exit"), ToShortcutString(ImGuiKey_F4, ImGuiMod_Alt)))
 				Application::windowState.closing = true;
 
 			ImGui::EndMenu();
@@ -548,6 +495,15 @@ namespace MikuMikuWorld
 				context.selectAll();
 
 			ImGui::Separator();
+			if (ImGui::MenuItem(getString("insert_skill"), ToShortcutString(config.input.insertSkill)))
+				timeline.insertSkill(context, context.currentTick);
+
+			//if (ImGui::MenuItem(getString("insert_fever")))
+			//{
+
+			//}
+
+			ImGui::Separator();
 			if (ImGui::MenuItem(getString("settings"), ToShortcutString(config.input.openSettings)))
 				settingsWindow.open = true;
 
@@ -562,6 +518,11 @@ namespace MikuMikuWorld
 			ImGui::MenuItem(getString("return_to_last_tick"), NULL, &config.returnToLastSelectedTickOnPause);
 			ImGui::MenuItem(getString("draw_waveform"), NULL, &config.drawWaveform);
 			ImGui::MenuItem(getString("stop_at_end"), NULL, &config.stopAtEnd);
+			ImGui::MenuItem(getString("preview_draw_toolbar"), NULL, &config.pvDrawToolbar);
+			
+			bool isPreviewFullScreen = isFullScreenPreview();
+			if (ImGui::MenuItem(getString("fullscreen_preview"), ToShortcutString(config.input.togglePreviewFullWindow), &isPreviewFullScreen))
+				preview.setFullWindow(isPreviewFullScreen);
 
 			ImGui::EndMenu();
 		}
@@ -686,8 +647,8 @@ namespace MikuMikuWorld
 		if (UI::toolbarButton(ICON_FA_SAVE, getString("save"), ToShortcutString(config.input.save)))
 			trySave(context.workingData.filename);
 
-		if (UI::toolbarButton(ICON_FA_FILE_EXPORT, getString("export"), ToShortcutString(config.input.exportSus)))
-			exportSus();
+		if (UI::toolbarButton(ICON_FA_FILE_EXPORT, getString("export"), ToShortcutString(config.input.exportScore)))
+			exportScore();
 
 		UI::toolbarSeparator();
 
@@ -745,7 +706,7 @@ namespace MikuMikuWorld
 		std::filesystem::create_directory(wAutoSaveDir);
 
 		context.score.metadata = context.workingData.toScoreMetadata();
-		serializeScore(context.score, autoSavePath + "\\mmw_auto_save_" + Utilities::getCurrentDateTime() + MMWS_EXTENSION);
+		NativeScoreSerializer().serialize(context.score, autoSavePath + "\\mmw_auto_save_" + Utilities::getCurrentDateTime() + MMWS_EXTENSION);
 		
 		int mmwsCount = 0;
 		for (const auto& file : std::filesystem::directory_iterator(wAutoSaveDir))
@@ -825,7 +786,7 @@ namespace MikuMikuWorld
 
 	void ScoreEditor::openImportPresetDialog()
 	{
-		IO::FileDialog fileDialog{"Import Preset", {{"Notes Preset", "*.json"}}, "", "", ".json", 0, Application::windowState.windowHandle};
+		IO::FileDialog fileDialog{"Import Preset", { IO::presetFilter }, "", "", ".json", 0, Application::windowState.windowHandle};
 		if (fileDialog.openFile() == IO::FileDialogResult::OK)
 			importPreset(fileDialog.outputFilename);
 	}

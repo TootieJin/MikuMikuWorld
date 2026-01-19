@@ -1,7 +1,8 @@
 #pragma once
+#define NOMINMAX
+#include <Windows.h>
 
 #define IMGUI_DEFINE_MATH_OPERATORS
-#define NOMINMAX
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -11,7 +12,6 @@
 
 #include "ScoreEditor.h"
 #include "ImGuiManager.h"
-#include <Windows.h>
 
 LRESULT CALLBACK wndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -29,6 +29,7 @@ namespace MikuMikuWorld
 		bool shouldPickScore = false;
 		bool dragDropHandled = true;
 		bool windowDragging = false;
+		bool fullScreen = false;
 		float lastDpiScale = 0.0f;
 		void* windowHandle{ 0 };
 		Vector2 position{};
@@ -71,6 +72,7 @@ namespace MikuMikuWorld
 		void writeSettings();
 		void loadResources();
 		void dispose();
+		void setFullScreen(bool fullScreen);
 		bool attemptSave();
 		bool isEditorUpToDate() const;
 

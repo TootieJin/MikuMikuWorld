@@ -1,6 +1,5 @@
 #pragma once
 #include "UI.h"
-#include "json.hpp"
 #include "Math.h"
 #include "InputBinding.h"
 
@@ -10,7 +9,7 @@ namespace MikuMikuWorld
 
 	struct InputConfiguration
 	{
-		MultiInputBinding togglePlayback = { "toggle_playback", {ImGuiKey_Space, ImGuiModFlags_None} };
+		MultiInputBinding togglePlayback = { "toggle_playback", {ImGuiKey_Space, ImGuiMod_None} };
 		MultiInputBinding stop = { "stop", {ImGuiKey_Backspace} };
 		MultiInputBinding decreaseNoteSize = { "decrease_note_size", {} };
 		MultiInputBinding increaseNoteSize = { "increase_note_size", {} };
@@ -19,24 +18,24 @@ namespace MikuMikuWorld
 		MultiInputBinding connectHolds = { "connect_holds", {} };
 		MultiInputBinding splitHold = { "split_hold", {} };
 		MultiInputBinding openHelp = { "help", {ImGuiKey_F1} };
-		MultiInputBinding openSettings = { "settings", {ImGuiKey_Comma, ImGuiModFlags_Ctrl} };
+		MultiInputBinding openSettings = { "settings", {ImGuiKey_Comma, ImGuiMod_Ctrl} };
 		MultiInputBinding deleteSelection = { "delete", {ImGuiKey_Delete} };
-		MultiInputBinding copySelection = { "copy", {ImGuiKey_C, ImGuiModFlags_Ctrl} };
-		MultiInputBinding cutSelection = { "cut", {ImGuiKey_X, ImGuiModFlags_Ctrl} };
-		MultiInputBinding paste = { "paste", {ImGuiKey_V, ImGuiModFlags_Ctrl} };
-		MultiInputBinding flipPaste = { "flip_paste", {ImGuiKey_V, ImGuiModFlags_Ctrl | ImGuiModFlags_Shift} };
-		MultiInputBinding flip = { "flip", {ImGuiKey_F, ImGuiModFlags_Ctrl} };
+		MultiInputBinding copySelection = { "copy", {ImGuiKey_C, ImGuiMod_Ctrl} };
+		MultiInputBinding cutSelection = { "cut", {ImGuiKey_X, ImGuiMod_Ctrl} };
+		MultiInputBinding paste = { "paste", {ImGuiKey_V, ImGuiMod_Ctrl} };
+		MultiInputBinding flipPaste = { "flip_paste", {ImGuiKey_V, ImGuiMod_Ctrl | ImGuiMod_Shift} };
+		MultiInputBinding flip = { "flip", {ImGuiKey_F, ImGuiMod_Ctrl} };
 		MultiInputBinding cancelPaste = { "cancel_paste", {ImGuiKey_Escape} };
 		MultiInputBinding previousTick = { "previous_tick", {ImGuiKey_DownArrow} };
 		MultiInputBinding nextTick = { "next_tick", {ImGuiKey_UpArrow} };
-		MultiInputBinding create = { "new_chart", {ImGuiKey_N, ImGuiModFlags_Ctrl} };
-		MultiInputBinding open = { "open", {ImGuiKey_O, ImGuiModFlags_Ctrl} };
-		MultiInputBinding save = { "save", {ImGuiKey_S, ImGuiModFlags_Ctrl} };
-		MultiInputBinding saveAs = { "save_as", {ImGuiKey_S, ImGuiModFlags_Ctrl | ImGuiModFlags_Shift} };
-		MultiInputBinding exportSus = { "export", {ImGuiKey_E, ImGuiModFlags_Ctrl} };
-		MultiInputBinding selectAll = { "select_all", {ImGuiKey_A, ImGuiModFlags_Ctrl} };
-		MultiInputBinding undo = { "undo", {ImGuiKey_Z, ImGuiModFlags_Ctrl} };
-		MultiInputBinding redo = { "redo", {ImGuiKey_Y, ImGuiModFlags_Ctrl} };
+		MultiInputBinding create = { "new_chart", {ImGuiKey_N, ImGuiMod_Ctrl} };
+		MultiInputBinding open = { "open", {ImGuiKey_O, ImGuiMod_Ctrl} };
+		MultiInputBinding save = { "save", {ImGuiKey_S, ImGuiMod_Ctrl} };
+		MultiInputBinding saveAs = { "save_as", {ImGuiKey_S, ImGuiMod_Ctrl | ImGuiMod_Shift} };
+		MultiInputBinding exportScore = { "export", {ImGuiKey_E, ImGuiMod_Ctrl} };
+		MultiInputBinding selectAll = { "select_all", {ImGuiKey_A, ImGuiMod_Ctrl} };
+		MultiInputBinding undo = { "undo", {ImGuiKey_Z, ImGuiMod_Ctrl} };
+		MultiInputBinding redo = { "redo", {ImGuiKey_Y, ImGuiMod_Ctrl} };
 		MultiInputBinding zoomOut = { "zoom_out", {} };
 		MultiInputBinding zoomIn = { "zoom_in", {} };
 
@@ -51,6 +50,11 @@ namespace MikuMikuWorld
 		MultiInputBinding timelineBpm = { "timeline_bpm", {ImGuiKey_8}, {ImGuiKey_Keypad8} };
 		MultiInputBinding timelineTimeSignature = { "timeline_time_signature", {ImGuiKey_9}, {ImGuiKey_Keypad9} };
 		MultiInputBinding timelineHiSpeed = { "timeline_hi_speed", {ImGuiKey_0}, {ImGuiKey_Keypad0} };
+		
+		MultiInputBinding insertSkill = { "insert_skill", {ImGuiKey_1, ImGuiMod_Alt} };
+
+		MultiInputBinding togglePreviewFullWindow = { "fullscreen_preview", {ImGuiKey_F5} };
+		MultiInputBinding toggleFullscreen = { "fullscreen", {ImGuiKey_F11} };
 	};
 
 	constexpr size_t maxRecentFilesEntries = 10;
@@ -63,6 +67,7 @@ namespace MikuMikuWorld
 		Vector2 windowPos;
 		Vector2 windowSize;
 		bool maximized;
+		bool fullScreen;
 		bool vsync;
 		bool showFPS;
 		int accentColor;
@@ -105,13 +110,15 @@ namespace MikuMikuWorld
 		bool pvFlickAnimation;
 		bool pvSimultaneousLine;
 		bool pvHoldAnimation;
-		bool pvLaneEffect;
-		bool pvNoteEffect;
-		bool pvNoteGlow;
 		float pvNoteSpeed;
 		float pvHoldAlpha;
+		float pvGuideAlpha;
 		float pvStageCover;
 		float pvStageOpacity;
+		float pvBackgroundBrightness;
+		int pvEffectsProfile;
+		int notesSkin;
+		bool pvDrawToolbar;
 
 		InputConfiguration input;
 
@@ -132,7 +139,7 @@ namespace MikuMikuWorld
 		&config.input.open,
 		&config.input.save,
 		&config.input.saveAs,
-		&config.input.exportSus,
+		&config.input.exportScore,
 		&config.input.undo,
 		&config.input.redo,
 
@@ -169,9 +176,13 @@ namespace MikuMikuWorld
 		&config.input.timelineBpm,
 		&config.input.timelineTimeSignature,
 		&config.input.timelineHiSpeed,
+		
+		&config.input.insertSkill,
 
 		&config.input.openHelp,
 		&config.input.openSettings,
+		&config.input.togglePreviewFullWindow,
+		&config.input.toggleFullscreen
 	};
 
 	static_assert(sizeof(InputConfiguration) / sizeof(MultiInputBinding) == (sizeof(bindings) / sizeof(MultiInputBinding*)),

@@ -3,81 +3,6 @@
 
 namespace MikuMikuWorld
 {
-	std::map<ParticleEffectType, float> particleEffectDuration = {
-		{ ParticleEffectType::Lane, 0.3f },
-		{ ParticleEffectType::NoteTapLane, 1.f },
-		{ ParticleEffectType::NoteCriticalLane, 1.f },
-		{ ParticleEffectType::NoteCriticalFlickLane, 1.f },
-
-		{ ParticleEffectType::NoteTapCircular, 0.6f },
-		{ ParticleEffectType::NoteTapLinear, 0.5f },
-
-		{ ParticleEffectType::NoteLongCircular, 0.6f },
-		{ ParticleEffectType::NoteLongLinear, 0.5f },
-		
-		{ ParticleEffectType::NoteFlickCircular, 0.6f },
-		{ ParticleEffectType::NoteFlickLinear, 0.5f },
-		{ ParticleEffectType::NoteFlickDirectional, 0.32f },
-		
-		{ ParticleEffectType::NoteCriticalCircular, 0.6f },
-		{ ParticleEffectType::NoteCriticalLinear, 0.5f },
-		
-		{ ParticleEffectType::NoteLongCriticalCircular, 0.6f },
-		{ ParticleEffectType::NoteLongCriticalLinear, 0.5f },
-		
-		{ ParticleEffectType::NoteCriticalFlickCircular, 0.6f },
-		{ ParticleEffectType::NoteCriticalFlickLinear, 0.5f },
-		{ ParticleEffectType::NoteCriticalDirectional, 0.32f },
-
-		{ ParticleEffectType::NoteFrictionCircular, 0.6f },
-		{ ParticleEffectType::NoteFrictionLinear, 0.5f },
-
-		{ ParticleEffectType::NoteFrictionCriticalCircular, 0.6f },
-		{ ParticleEffectType::NoteFrictionCriticalLinear, 0.5f },
-
-		{ ParticleEffectType::NoteLongAmongCircular, 0.6f },
-		{ ParticleEffectType::NoteLongAmongCriticalCircular, 0.6f },
-
-		{ ParticleEffectType::NoteLongSegmentCircular, 1.f },
-		{ ParticleEffectType::NoteLongSegmentCircularEx, 1.f },
-		{ ParticleEffectType::NoteLongSegmentLinear, 0.5f },
-
-		{ ParticleEffectType::NoteLongCriticalSegmentCircular, 1.f },
-		{ ParticleEffectType::NoteLongCriticalSegmentCircularEx, 1.f },
-		{ ParticleEffectType::NoteLongCriticalSegmentLinear, 0.5f },
-
-		{ ParticleEffectType::SlotNoteTap, 0.5f },
-		{ ParticleEffectType::SlotNoteLong, 0.5f },
-		{ ParticleEffectType::SlotNoteFlick, 0.5f },
-		{ ParticleEffectType::SlotNoteCritical, 0.5f },
-
-		{ ParticleEffectType::SlotGlowNoteTap, 0.25f },
-		{ ParticleEffectType::SlotGlowNoteCritical, 0.25f },
-		{ ParticleEffectType::SlotGlowNoteLong, 0.25f },
-		{ ParticleEffectType::SlotGlowNoteFlick, 0.25f },
-
-		{ ParticleEffectType::SlotGlowNoteLongSegment, 0.0625f },
-		{ ParticleEffectType::SlotGlowNoteLongCriticalSegment, 0.0625f },
-	};
-
-	std::map<ParticleEffectType, ParticleEffectType> particleEffectFallback = {
-		{ ParticleEffectType::NoteTapLane, ParticleEffectType::Lane },
-		{ ParticleEffectType::NoteCriticalLane, ParticleEffectType::Lane },
-		{ ParticleEffectType::NoteCriticalFlickLane, ParticleEffectType::NoteCriticalLane },
-
-		{ ParticleEffectType::NoteCriticalFlickCircular, ParticleEffectType::NoteCriticalCircular },
-		{ ParticleEffectType::NoteCriticalFlickLinear, ParticleEffectType::NoteCriticalLinear },
-
-		{ ParticleEffectType::NoteFrictionCircular, ParticleEffectType::NoteLongAmongCircular },
-		{ ParticleEffectType::NoteFrictionLinear, ParticleEffectType::NoteLongLinear },
-
-		{ ParticleEffectType::NoteFrictionCriticalCircular, ParticleEffectType::NoteLongAmongCriticalCircular },
-		{ ParticleEffectType::NoteFrictionCriticalLinear, ParticleEffectType::NoteCriticalLinear },
-
-		{ ParticleEffectType::NoteLongCriticalCircular, ParticleEffectType::NoteCriticalCircular },
-		{ ParticleEffectType::NoteLongCriticalLinear, ParticleEffectType::NoteCriticalLinear },
-	};
-
 	SpriteTransform::SpriteTransform(float v[64]) : xx(v), xy(nullptr), yx(nullptr), yy(v + 48) 
 	{
 		DirectX::XMMATRIX tmp(v + 16);
@@ -102,50 +27,13 @@ namespace MikuMikuWorld
 			{ DirectX::XMVectorGetW(tx), DirectX::XMVectorGetW(ty), vPos[3].z, vPos[3].z }
 		}};
 	}
-
-	DirectX::XMVECTOR PropertyCoeff::compute(const DirectX::XMVECTOR & v1_4, const DirectX::XMVECTOR & v5_8) const
-	{
-		DirectX::XMVECTOR result = DirectX::g_XMZero;
-		if (r1_4)
-			result = DirectX::XMVector4Transform(v1_4, *r1_4);
-		if (r5_8)
-			result = DirectX::XMVectorAdd(result, DirectX::XMVector4Transform(v5_8, *r5_8));
-		DirectX::XMVECTOR two_pi_v1_4 = DirectX::XMVectorScale(v1_4, NUM_PI * 2);
-		DirectX::XMVECTOR two_pi_v5_8 = DirectX::XMVectorScale(v5_8, NUM_PI * 2);
-		if (sinr1_4)
-			result = DirectX::XMVectorAdd(result, DirectX::XMVector4Transform(DirectX::XMVectorSinEst(two_pi_v1_4), *sinr1_4));
-		if (sinr5_8)
-			result = DirectX::XMVectorAdd(result, DirectX::XMVector4Transform(DirectX::XMVectorSinEst(two_pi_v5_8), *sinr5_8));
-		if (cosr1_4)
-			result = DirectX::XMVectorAdd(result, DirectX::XMVector4Transform(DirectX::XMVectorCosEst(two_pi_v1_4), *cosr1_4));
-		if (cosr5_8)
-			result = DirectX::XMVectorAdd(result, DirectX::XMVector4Transform(DirectX::XMVectorCosEst(two_pi_v5_8), *cosr5_8));
-		return result;
-	}
-
-	std::array<Engine::Range, 6> Particle::compute(const std::array<float, 8> &values) const
-	{
-		DirectX::XMVECTOR r1_4 = DirectX::XMLoadFloat4(reinterpret_cast<const DirectX::XMFLOAT4*>(values.data()));
-		DirectX::XMVECTOR r5_8 = DirectX::XMLoadFloat4(reinterpret_cast<const DirectX::XMFLOAT4*>(values.data() + 4));
-		DirectX::XMVECTOR xyFromTo = DirectX::XMVectorAdd(DirectX::XMVectorSet(xywhta[0].from, xywhta[0].to, xywhta[1].from, xywhta[1].to), xyCoeff.compute(r1_4, r5_8));
-		DirectX::XMVECTOR whFromTo = DirectX::XMVectorAdd(DirectX::XMVectorSet(xywhta[2].from, xywhta[2].to, xywhta[3].from, xywhta[3].to), whCoeff.compute(r1_4, r5_8));
-		DirectX::XMVECTOR taFromTo = DirectX::XMVectorAdd(DirectX::XMVectorSet(xywhta[4].from, xywhta[4].to, xywhta[5].from, xywhta[5].to), taCoeff.compute(r1_4, r5_8));
-		return {{
-			{ DirectX::XMVectorGetX(xyFromTo), DirectX::XMVectorGetY(xyFromTo) },
-			{ DirectX::XMVectorGetZ(xyFromTo), DirectX::XMVectorGetW(xyFromTo) },
-			{ DirectX::XMVectorGetX(whFromTo), DirectX::XMVectorGetY(whFromTo) },
-			{ DirectX::XMVectorGetZ(whFromTo), DirectX::XMVectorGetW(whFromTo) },
-			{ DirectX::XMVectorGetX(taFromTo), DirectX::XMVectorGetY(taFromTo) },
-			{ DirectX::XMVectorGetZ(taFromTo), DirectX::XMVectorGetW(taFromTo) },
-		}};
-	}
 }
 
 namespace MikuMikuWorld::Engine
 {
 	Range getNoteVisualTime(Note const& note, Score const& score, float noteSpeed)
 	{
-		float targetTime = accumulateScaledDuration(note.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges);
+		double targetTime = accumulateScaledDuration(note.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges);
 		return {targetTime - getNoteDuration(noteSpeed), targetTime};
 	}
 
@@ -198,34 +86,4 @@ namespace MikuMikuWorld::Engine
 		float bottom = sprite.getY2() / texture.getHeight();
 		return quadvPos(left, right, top, bottom);
 	}
-
-	std::array<DirectX::XMFLOAT4, 4> circularQuadvPos(float lane, float width, float height)
-	{
-		float bottom = 1 + height;
-		float top = 1 - height;
-
-		return perspectiveQuadvPos(
-			lane - width / top,
-			lane - width / bottom,
-			lane + width / top,
-			lane + width / bottom,
-			top, bottom
-		);
-	}
-
-	std::array<DirectX::XMFLOAT4, 4> linearQuadvPos(float lane, float width, float height, float shear)
-	{
-		const float p = 1.125;
-
-		float bottom = 1;
-		float top = 1 - 2 * height;
-
-		return {{
-			{ lane * p + width + shear, top, 0.f, 1.f },
-			{ lane + width, bottom, 0.f, 1.f },
-			{ lane - width, bottom, 0.f, 1.f },
-			{ lane * p - width + shear, top, 0.f, 1.f }
-		}};
-	}
 }
-

@@ -1,14 +1,22 @@
+#include "Application.h"
 #include "ScorePreview.h"
 #include "PreviewEngine.h"
 #include "Rendering/Camera.h"
 #include "ResourceManager.h"
 #include "Colors.h"
 #include "ImageCrop.h"
-#include "Application.h"
+#include "NoteSkin.h"
 #include "ApplicationConfiguration.h"
 
 namespace MikuMikuWorld
 {
+	struct PreviewPlaybackState
+	{
+		bool isPlaying{}, wasLastFramePlaying{};
+	} playbackState;
+
+	constexpr float EFFECTS_TARGET_ASPECT = 16.f / 9.f;
+
 	namespace Utils
 	{
 		// Scale a rectangle with specified aspect ratio to be visible inside the target rectangle
@@ -59,14 +67,14 @@ namespace MikuMikuWorld
 		init = true;
 		backgroundFile = config.backgroundImage;
 		jacketFile = jacket.getFilename();
-		brightness = config.backgroundBrightness;
+		brightness = config.pvBackgroundBrightness;
 		bool useDefaultTexture = backgroundFile.empty();
-		Texture backgroundTex = { useDefaultTexture ? Application::getAppDir() + "res\\textures\\default.png" : backgroundFile};
+		Texture backgroundTex = { useDefaultTexture ? Application::getAppDir() + "res\\editor\\default.png" : backgroundFile};
 		const float bgWidth = backgroundTex.getWidth(), bgHeight = backgroundTex.getHeight();
 		if (bgWidth != frameBuffer.getWidth() || bgHeight != frameBuffer.getHeight())
 			frameBuffer.resize(bgWidth, bgHeight);
 		frameBuffer.bind();
-		frameBuffer.clear();
+		frameBuffer.clear(0, 0, 0, 0);
 		int shaderId;
 		if ((shaderId = ResourceManager::getShader("basic2d")) == -1) return;
 		Shader* basicShader = ResourceManager::shaders[shaderId];
@@ -189,7 +197,7 @@ namespace MikuMikuWorld
 
 	std::array<DirectX::XMFLOAT4, 4> ScorePreviewBackground::DefaultJacket::getLeftUV()
 	{
-		return {{
+		return {{	
 			{  303.8 / 740, 504.8 / 740, 0, 0 },
 			{  317.5 / 740, 297.7 / 740, 0, 0 },
 			{    5.5 / 740, 278.3 / 740, 0, 0 },
@@ -247,14 +255,16 @@ namespace MikuMikuWorld
 		}};
 	}
 
-	ScorePreviewWindow::ScorePreviewWindow() : previewBuffer{1920, 1080}, notesTex(), background()
+	ScorePreviewWindow::ScorePreviewWindow() : previewBuffer{ 1920, 1080 }, background(), scaledAspectRatio(1)
 	{
-
+		noteEffectsCamera.setFov(50.f);
+		noteEffectsCamera.setRotation(-90.f, 27.1f);
+		noteEffectsCamera.setPosition({ 0, 5.32f, -5.86f, 0 });
+		noteEffectsCamera.positionCamNormal();
 	}
 
 	ScorePreviewWindow::~ScorePreviewWindow()
 	{
-		if(notesTex) notesTex->dispose();
 	}
 
 	void ScorePreviewWindow::update(ScoreContext& context, Renderer* renderer)
@@ -264,10 +274,7 @@ namespace MikuMikuWorld
 			// Don't draw anything if the window is not active.
 			// SFX and music updates are handled in the timeline
 			return;
-		if (context.scorePreviewDrawData.noteSpeed != config.pvNoteSpeed
-		|| context.scorePreviewDrawData.hasLaneEffect != config.pvLaneEffect
-		|| context.scorePreviewDrawData.hasNoteEffect != config.pvNoteEffect
-		|| context.scorePreviewDrawData.hasSlotEffect != config.pvNoteGlow)
+		if (context.scorePreviewDrawData.noteSpeed != config.pvNoteSpeed)
 			context.scorePreviewDrawData.calculateDrawData(context.score);
 		ImVec2 size = ImGui::GetContentRegionAvail() - ImVec2{ this->getScrollbarWidth(), 0 }; // Reserve space for the scrollbar
 		ImVec2 position = ImGui::GetCursorScreenPos();
@@ -279,10 +286,22 @@ namespace MikuMikuWorld
 		if (config.drawBackground && background.shouldUpdate(context.workingData.jacket))
 			background.update(renderer, context.workingData.jacket);
 
+		if (!context.scorePreviewDrawData.effectView.isInitialized())
+			context.scorePreviewDrawData.effectView.init();
+
+		if (playbackState.isPlaying)
+		{
+			if (!playbackState.wasLastFramePlaying)
+				context.scorePreviewDrawData.effectView.reset();
+
+			context.scorePreviewDrawData.effectView.update(context);
+		}
+
 		static int shaderId = ResourceManager::getShader("basic2d");
 		static int pteShaderId = ResourceManager::getShader("particles");
-		if (shaderId == -1) return;
-		if (pteShaderId == -1) return;
+		if (shaderId == -1 || pteShaderId == -1)
+			return;
+
 		Shader* shader = ResourceManager::shaders[shaderId];
 		Shader* pteShader = ResourceManager::shaders[pteShaderId];
 		shader->use();
@@ -293,12 +312,21 @@ namespace MikuMikuWorld
 		float scaledHeight = (config.pvLockAspectRatio ? Engine::STAGE_TARGET_HEIGHT : size.y) * Engine::STAGE_HEIGHT_RATIO;
 		float scrTop  = (config.pvLockAspectRatio ? Engine::STAGE_TARGET_HEIGHT : size.y) * Engine::STAGE_TOP_RATIO;
 		if (config.pvLockAspectRatio) Utils::fillRect(Engine::STAGE_TARGET_WIDTH, Engine::STAGE_TARGET_HEIGHT, size.x / size.y, width, height);
+		
+		float aspectRatio = width / height;
 		scaledAspectRatio = scaledWidth / scaledHeight;
 
 		auto view = DirectX::XMMatrixScaling(scaledWidth, scaledHeight, 1.f) * DirectX::XMMatrixTranslation(0.f, -scrTop, 0.f);
-		auto projection = Camera::getOffCenterOrthographicProjection(-width / 2, width / 2, -height / 2, height / 2);
+		auto projection = Camera::getOffCenterOrthographicProjection(-width / 2, width / 2, height / 2, -height / 2);
 		auto viewProjection = view * projection;
+
+		const auto pView = noteEffectsCamera.getViewMatrix();
+		auto pProjection = noteEffectsCamera.getProjectionMatrix(aspectRatio, 0.3, 1000);
+		float projectionScale = std::min(aspectRatio / EFFECTS_TARGET_ASPECT, 1.f);
+		pProjection = DirectX::XMMatrixScaling(projectionScale, projectionScale, 1.f) * pProjection;
+		
 		shader->setMatrix4("projection", viewProjection);
+		float currentTime = context.getTimeAtCurrentTick();
 
 		if (previewBuffer.getWidth() != size.x || previewBuffer.getHeight() != size.y)
 			previewBuffer.resize(size.x, size.y);
@@ -308,129 +336,144 @@ namespace MikuMikuWorld
 		renderer->beginBatch();
 		if (config.drawBackground)
 		{
-			background.setBrightness(config.backgroundBrightness);
+			background.setBrightness(config.pvBackgroundBrightness);
 			background.draw(renderer, width, height);
 		}
 		drawStage(renderer);
 		renderer->endBatch();
 
+		context.scorePreviewDrawData.effectView.updateEffects(context, noteEffectsCamera, currentTime);
+
+		shader->use();
+		shader->setMatrix4("projection", viewProjection);
 		renderer->beginBatch();
 		drawLines(context, renderer);
 		drawHoldCurves(context, renderer);
-		drawHoldTicks(context, renderer);
-		drawNotes(context, renderer);
-		drawUnblendParticles(context, renderer);
-		if (config.pvStageCover != 0){
-			drawStageCover(renderer);
+		if (config.pvStageCover != 0) {
+			drawStageCoverMask(renderer);
 			renderer->endBatchWithDepthTest(GL_LEQUAL); // using depth test to cull the notes drawn
 		}
 		else
 			renderer->endBatch();
 
 		pteShader->use();
-		pteShader->setMatrix4("viewProjection", viewProjection);
-		pteShader->setFloat("blendFactor", 0.5); // full additive 0 - 1 full alpha blend
+		pteShader->setMatrix4("projection", pProjection);
+		pteShader->setMatrix4("view", pView);
 		renderer->beginBatch();
-		drawParticles(context, renderer);
+		context.scorePreviewDrawData.effectView.drawUnderNoteEffects(renderer, currentTime);
 		renderer->endBatchWithBlending(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-		
+
+		shader->use();
+		shader->setMatrix4("projection", viewProjection);
+		renderer->beginBatch();
+
+		drawHoldTicks(context, renderer);
+		drawNotes(context, renderer);
+		if (config.pvStageCover != 0) {
+			drawStageCoverMask(renderer);
+			drawStageCover(renderer);
+			drawStageCoverDecoration(renderer);
+			renderer->endBatchWithDepthTest(GL_LEQUAL); // using depth test to cull the notes drawn
+		}
+		else
+			renderer->endBatch();
+
+		pteShader->use();
+		pteShader->setMatrix4("projection", pProjection);
+		pteShader->setMatrix4("view", pView);
+		renderer->beginBatch();
+		context.scorePreviewDrawData.effectView.drawEffects(renderer, currentTime);
+		renderer->endBatchWithBlending(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
 		previewBuffer.unblind();
-		drawList->AddImage((ImTextureID)(size_t)previewBuffer.getTexture(), position, position + size);
+		drawList->AddImage((ImTextureID)(size_t)previewBuffer.getTexture(), position, position + size, {0, 1}, {1, 0});
 	}
 
-	void ScorePreviewWindow::updateUI(ScoreEditorTimeline& timeline, ScoreContext& context) const
+	void ScorePreviewWindow::updateUI(ScoreEditorTimeline& timeline, ScoreContext& context)
 	{
+		lastFrameFullWindow = fullWindow;
+
 		updateToolbar(timeline, context);
 		ImGuiIO io = ImGui::GetIO();
-		float mouseWheel = io.MouseWheel * -1;
+		float mouseWheel = io.MouseWheel * 1;
 		if (!timeline.isPlaying() && ImGui::IsWindowHovered() && mouseWheel != 0)
 		{
 			context.currentTick += std::max(mouseWheel * TICKS_PER_BEAT / 2, (float)-context.currentTick);
 			//timeline.focusCursor(context.currentTick, mouseWheel > 0 ? Direction::Up : Direction::Down);
 		}
 		updateScrollbar(timeline, context);
+
+		playbackState.wasLastFramePlaying = playbackState.isPlaying;
+		playbackState.isPlaying = timeline.isPlaying();
+
+		if (isFullWindow())
+		{
+			if (ImGui::BeginPopupContextWindow("preview_context_menu", ImGuiPopupFlags_NoReopen | ImGuiPopupFlags_MouseButtonDefault_))
+			{
+				bool _fullWindow = fullWindow;
+				if (ImGui::MenuItem(getString("fullscreen_preview"), ToShortcutString(config.input.togglePreviewFullWindow), &_fullWindow))
+					setFullWindow(_fullWindow);
+
+				ImGui::MenuItem(getString("preview_draw_toolbar"), NULL, &config.pvDrawToolbar);
+				ImGui::MenuItem(getString("return_to_last_tick"), NULL, &config.returnToLastSelectedTickOnPause);
+				ImGui::EndPopup();
+			}
+		}
+	}
+
+	void ScorePreviewWindow::setFullWindow(bool _fullWindow)
+	{
+		fullWindow = _fullWindow;
+	}
+
+	void ScorePreviewWindow::loadNoteEffects(Effect::EffectView& effectView)
+	{
+		const std::string effectsDir = Application::getAppDir() + "res\\effect\\" + std::to_string(config.pvEffectsProfile) + "\\";
+		size_t effectCount = arrayLength(Effect::effectNames);
+
+		if (!IO::File::exists(effectsDir))
+			return;
+
+		// Cleanup. We don't want all profiles and their resources loaded in memory
+		ResourceManager::removeAllParticleEffects();
+		int texIndex = ResourceManager::getTexture("tex_note_common_all_v2.png");
+		if (texIndex > -1)
+			ResourceManager::disposeTexture(texIndex);
+
+		ResourceManager::loadTexture(effectsDir + "tex_note_common_all_v2.png");
+
+		std::vector<std::string> failedParticleFiles;
+		for (size_t i = 0; i < effectCount; i++)
+		{
+			const std::string filename{ effectsDir + Effect::effectNames[i] + ".json" };
+			int particleId = ResourceManager::loadParticleEffect(filename);
+
+			if (particleId == -1)
+				failedParticleFiles.push_back(filename);
+		}
+
+		if (!failedParticleFiles.empty())
+		{
+			std::string fullErrorMessage = "Failed to load the following note effects: \n\n";
+			for (const auto& error : failedParticleFiles)
+				fullErrorMessage.append(error).append("\n");
+
+			IO::messageBox(
+				APP_NAME,
+				fullErrorMessage,
+				IO::MessageBoxButtons::Ok,
+				IO::MessageBoxIcon::Warning,
+				Application::windowState.windowHandle
+			);
+		}
+
+		effectView.reset();
+		effectView.init();
 	}
 
 	const Texture &ScorePreviewWindow::getNoteTexture()
 	{
-		// At smaller widths, due to mipmapping, the texture becomes blurry.
-		// So we make a copy texture which have no mipmapping
-		if (!notesTex)
-		{
-			const Texture& target_texture = ResourceManager::textures[noteTextures.notes];
-			notesTex = std::make_unique<Texture>(target_texture.getFilename(), TextureFilterMode::Linear);
-		}
-		return *notesTex;
-	}
-
-	std::pair<float, float> ScorePreviewWindow::getNoteBound(const Note &note) const
-	{
-		float left = Engine::laneToLeft(note.lane), right = left + note.width;
-		if (config.pvMirrorScore)
-			std::swap(left *= -1, right *= -1);
-		return std::make_pair(left, right);
-	}
-
-	std::pair<float, float> ScorePreviewWindow::getHoldStepBound(const Note &note, const Score &score, int curTick) const
-	{
-		auto& holdNotes = score.holdNotes.at(note.parentID);
-		int curStepIdx = findHoldStep(holdNotes, note.ID);
-		if (holdNotes.steps[curStepIdx].type != HoldStepType::Skip)
-			return getNoteBound(note);
-		
-		int startStepIdx = curStepIdx;
-		while (startStepIdx != 0 && holdNotes.steps[startStepIdx - 1].type == HoldStepType::Skip)
-			startStepIdx--;
-		const HoldStep& lastHoldStep = startStepIdx != 0 ? holdNotes.steps[startStepIdx - 1] : holdNotes.start;
-		auto easeFunc = getEaseFunction(lastHoldStep.ease);
-
-		const Note& startNote = score.notes.at(lastHoldStep.ID);
-		auto [leftStart, rightStart] = getNoteBound(startNote);
-
-		auto it = std::find_if(holdNotes.steps.begin() + curStepIdx, holdNotes.steps.end(), [](const HoldStep& step) { return step.type != HoldStepType::Skip; });
-		const Note& endNote = score.notes.at(it == holdNotes.steps.end() ? holdNotes.end : it->ID);
-		auto [leftStop, rightStop] = getNoteBound(endNote);
-
-		float progress = unlerp(
-			accumulateScaledDuration(startNote.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges),
-			accumulateScaledDuration(endNote.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges),
-			accumulateScaledDuration(note.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges)
-		);
-
-		return std::make_pair(
-			easeFunc(leftStart, leftStop, progress),
-			easeFunc(rightStart, rightStop, progress)
-		);
-	}
-
-	std::pair<float, float> MikuMikuWorld::ScorePreviewWindow::getHoldSegmentBound(const Note &note, const Score &score, int curTick) const
-	{
-		const auto isNotHoldSkip = [](const HoldStep& step) { return step.type != HoldStepType::Skip; };
-		const HoldNote& holdNotes = score.holdNotes.at(note.ID);
-		auto it = std::lower_bound(holdNotes.steps.begin(), holdNotes.steps.end(), curTick, [&score](const HoldStep& step, int tick) { return score.notes.at(step.ID).tick < tick; });
-		auto rit = std::find_if(std::make_reverse_iterator(it), holdNotes.steps.rend(), isNotHoldSkip);
-		const HoldStep& startHoldStep = rit == holdNotes.steps.rend() ? holdNotes.start : *rit;
-
-		const Note& startNote = rit == holdNotes.steps.rend() ? note : score.notes.at(rit->ID);
-		auto [leftStart, rightStart] = getNoteBound(startNote);
-		if (startNote.tick == curTick) return std::make_pair(leftStart, rightStart);
-
-		auto end = std::find_if(it, holdNotes.steps.end(), isNotHoldSkip);
-		const Note& endNote = score.notes.at(end == holdNotes.steps.end() ? holdNotes.end : end->ID);
-		auto [leftStop, rightStop] = getNoteBound(endNote);
-		if (endNote.tick == curTick) return std::make_pair(leftStop, rightStop);
-
-		auto easeFunc = getEaseFunction(startHoldStep.ease);
-		float progress = unlerp(
-			accumulateScaledDuration(startNote.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges),
-			accumulateScaledDuration(endNote.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges),
-			accumulateScaledDuration(curTick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges)
-		);
-
-		return std::make_pair(
-			easeFunc(leftStart, leftStop, progress),
-			easeFunc(rightStart, rightStop, progress)
-		);
+		return ResourceManager::textures[noteSkins.getItemIndex(NoteSkinItem::Notes)];
 	}
 
 	void ScorePreviewWindow::drawStage(Renderer* renderer)
@@ -442,11 +485,34 @@ namespace MikuMikuWorld
 		if (!isArrayIndexInBounds(SPR_SEKAI_STAGE, stage.sprites))
 			return;
 		const Sprite& stageSprite = stage.sprites[SPR_SEKAI_STAGE];
-		const float stageWidth = (Engine::STAGE_TEX_WIDTH / Engine::STAGE_LANE_WIDTH) * Engine::STAGE_NUM_LANES;
-		const float stageLeft  = -stageWidth / 2;
-		const float stageTop = Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT;
-		const float stageHeight = Engine::STAGE_TEX_HEIGHT / Engine::STAGE_LANE_HEIGHT;
+		constexpr float stageWidth = (Engine::STAGE_TEX_WIDTH / Engine::STAGE_LANE_WIDTH) * Engine::STAGE_NUM_LANES;
+		constexpr float stageLeft  = -stageWidth / 2;
+		constexpr float stageTop = Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT;
+		constexpr float stageHeight = Engine::STAGE_TEX_HEIGHT / Engine::STAGE_LANE_HEIGHT;
 		renderer->drawRectangle({stageLeft, stageTop}, {stageWidth, stageHeight}, stage, stageSprite.getX1(), stageSprite.getX2(), stageSprite.getY1(), stageSprite.getY2(), defaultTint.scaleAlpha(config.pvStageOpacity), -1);
+	}
+
+	void ScorePreviewWindow::drawStageCoverMask(Renderer* renderer)
+	{
+		int index = ResourceManager::getTexture("stage");
+		if (index == -1)
+			return;
+		const Texture& stage = ResourceManager::textures[index];
+		if (!isArrayIndexInBounds(SPR_SEKAI_STAGE, stage.sprites))
+			return;
+		const Sprite& stageSprite = stage.sprites[SPR_SEKAI_STAGE];
+		constexpr float stageWidth = (Engine::STAGE_TEX_WIDTH / Engine::STAGE_LANE_WIDTH) * Engine::STAGE_NUM_LANES;
+		constexpr float stageLeft = -stageWidth / 2, stageRight = stageWidth / 2;
+
+		constexpr float stageTop = Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT;
+		const float stageHeight = config.pvStageCover * (1 - stageTop);
+		const float spriteHeight = config.pvStageCover * (Engine::STAGE_LANE_HEIGHT - Engine::STAGE_LANE_TOP);
+
+		static auto model = DirectX::XMMatrixTranslation(0, 0, 1);
+		renderer->drawQuad(
+			Engine::quadvPos(stageLeft, stageRight, stageTop + stageHeight, 0), model, stage,
+			0, 0, 1, 1, defaultTint.scaleAlpha(0), 0
+		);
 	}
 
 	void ScorePreviewWindow::drawStageCover(Renderer* renderer)
@@ -458,27 +524,24 @@ namespace MikuMikuWorld
 		if (!isArrayIndexInBounds(SPR_SEKAI_STAGE, stage.sprites))
 			return;
 		const Sprite& stageSprite = stage.sprites[SPR_SEKAI_STAGE];
-		const float stageWidth = (Engine::STAGE_TEX_WIDTH / Engine::STAGE_LANE_WIDTH) * Engine::STAGE_NUM_LANES;
+		constexpr float stageWidth = (Engine::STAGE_TEX_WIDTH / Engine::STAGE_LANE_WIDTH) * Engine::STAGE_NUM_LANES;
 		const float stageLeft = -stageWidth / 2, stageRight = stageWidth / 2;
 
-		const float stageTop = Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT;
+		constexpr float stageTop = Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT;
 		const float stageHeight = config.pvStageCover * (1 - stageTop);
 		const float spriteHeight = config.pvStageCover * (Engine::STAGE_LANE_HEIGHT - Engine::STAGE_LANE_TOP);
 
-		auto vPos = Engine::quadvPos(stageLeft, stageRight, stageTop + stageHeight, stageTop);
-		auto model = DirectX::XMMatrixTranslation(0, 0, 1);
-		// The mask that cull the notes
-		renderer->drawQuad(
-			Engine::quadvPos(stageLeft, stageRight, stageTop + stageHeight, 0), model, stage,
-			0, 0, 1, 1, defaultTint.scaleAlpha(0), 0
-		);
-		// The darken part to indicate notes won't spawn
+		static auto model = DirectX::XMMatrixTranslation(0, 0, 1);
 		renderer->drawQuad(
 			Engine::quadvPos(stageLeft, stageRight, stageTop + stageHeight, stageTop), model, stage,
 			stageSprite.getX1(), stageSprite.getX2(), stageSprite.getY1(), stageSprite.getY1() + spriteHeight,
 			Color{0.f, 0.f, 0.f, config.pvStageOpacity}, 0
 		);
+	}
 
+	void MikuMikuWorld::ScorePreviewWindow::drawStageCoverDecoration(Renderer *renderer)
+	{
+		constexpr float stageTop = Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT;
 		const Texture& noteTex = getNoteTexture();
 		size_t sprIndex = SPR_SIMULTANEOUS_CONNECTION;
 		size_t transIndex = static_cast<size_t>(SpriteType::SimultaneousLine);
@@ -487,9 +550,9 @@ namespace MikuMikuWorld
 		const SpriteTransform& lineTransform = ResourceManager::spriteTransforms[transIndex];
 		const Sprite& sprite = noteTex.sprites[sprIndex];
 		float x = 0.12 * (1 - config.pvStageCover);
-		vPos = lineTransform.apply(Engine::perspectiveQuadvPos(-6 - x, 6 + x, 1. + Engine::getNoteHeight(), 1. - Engine::getNoteHeight()));
+		auto vPos = lineTransform.apply(Engine::perspectiveQuadvPos(-6 - x, 6 + x, 1. + Engine::getNoteHeight(), 1. - Engine::getNoteHeight()));
 		float y = stageTop + config.pvStageCover * (1 - stageTop);
-		model = DirectX::XMMatrixScaling(y, y, 1.f);
+		auto model = DirectX::XMMatrixScaling(y, y, 1.f);
 		renderer->drawQuad(vPos, model, noteTex,
 			sprite.getX1(), sprite.getX2(), sprite.getY1(), sprite.getY2(),
 			defaultTint.scaleAlpha(config.pvStageOpacity), -1
@@ -498,8 +561,8 @@ namespace MikuMikuWorld
 
 	void ScorePreviewWindow::drawNotes(const ScoreContext& context, Renderer *renderer)
 	{
-		float current_tm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
-		float scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+		double current_tm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
+		double scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
 		const auto& drawData = context.scorePreviewDrawData;
 	
 		for (auto& note : drawData.drawingNotes)
@@ -507,7 +570,7 @@ namespace MikuMikuWorld
 			if (scaled_tm < note.visualTime.min || scaled_tm > note.visualTime.max)
 				continue;
 			const Note& noteData = context.score.notes.at(note.refID);
-			float y = Engine::approach(note.visualTime.min, note.visualTime.max, scaled_tm);
+			double y = Engine::approach(note.visualTime.min, note.visualTime.max, scaled_tm);
 			float l = Engine::laneToLeft(noteData.lane), r = Engine::laneToLeft(noteData.lane) + noteData.width;
 			drawNoteBase(renderer, noteData, l, r, y);
 			if (noteData.friction)
@@ -521,9 +584,10 @@ namespace MikuMikuWorld
 	{
 		if (!config.pvSimultaneousLine)
 			return;
-		if (noteTextures.notes == -1)
+
+		if (noteSkins.getItemIndex(NoteSkinItem::Notes) == -1)
 			return;
-		float scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+		double scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
 		const auto& drawData = context.scorePreviewDrawData.drawingLines;
 
 		const Texture& texture = getNoteTexture();
@@ -553,11 +617,12 @@ namespace MikuMikuWorld
 
 	void ScorePreviewWindow::drawHoldTicks(const ScoreContext &context, Renderer *renderer)
 	{
-		if (noteTextures.notes == -1)
+		if (noteSkins.getItemIndex(NoteSkinItem::Notes) == -1)
 			return;
-		float scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
-		const float w = Engine::getNoteHeight() / scaledAspectRatio;
-		const float noteTop = 1. + Engine::getNoteHeight(), noteBottom = 1. - Engine::getNoteHeight();
+		double scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+		const float notesHeight = Engine::getNoteHeight() * 1.3f;
+		const float w = notesHeight / scaledAspectRatio;
+		const float noteTop = 1. + notesHeight, noteBottom = 1. - notesHeight;
 		const Texture& texture = getNoteTexture();
 
 		for (auto& tick : context.scorePreviewDrawData.drawingHoldTicks)
@@ -585,53 +650,66 @@ namespace MikuMikuWorld
 		}
 	}
 
-	void ScorePreviewWindow::drawHoldCurves(const ScoreContext &context, Renderer *renderer)
+	void ScorePreviewWindow::drawHoldCurves(const ScoreContext& context, Renderer* renderer)
 	{
-		const float total_tm = accumulateScaledDuration(context.scorePreviewDrawData.maxTicks, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
-		const float current_tm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
-		const float scaled_tm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+		const float total_tm = accumulateDuration(context.scorePreviewDrawData.maxTicks, TICKS_PER_BEAT, context.score.tempoChanges);
+		const double current_tm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
+		const double current_stm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
 		const float noteDuration = Engine::getNoteDuration(config.pvNoteSpeed);
+		const double visible_stm = current_stm + noteDuration;
 		const float mirror = config.pvMirrorScore ? -1 : 1;
 		const auto& drawData = context.scorePreviewDrawData;
-		
+
 		for (auto& segment : drawData.drawingHoldSegments)
 		{
-			if (scaled_tm < (segment.headTime - noteDuration) || scaled_tm >= segment.tailTime)
+			if ((std::min(segment.headTime, segment.tailTime) > visible_stm && segment.startTime > current_tm) || current_tm >= segment.endTime)
 				continue;
-			
+
 			const Note& holdEnd = context.score.notes.at(segment.endID);
 			const Note& holdStart = context.score.notes.at(holdEnd.parentID);
-			float holdStartCenter = Engine::getNoteCenter(holdStart) * mirror, holdStart_tm, holdEnd_tm;
-			bool isActivated = current_tm >= segment.startTime;
+			float holdStartCenter = Engine::getNoteCenter(holdStart) * mirror;
+			bool isHoldActivated = current_tm >= segment.activeTime;
+			bool isSegmentActivated = current_tm >= segment.startTime;
 
-			int textureID = segment.isGuide ? noteTextures.touchLine : noteTextures.holdPath;
+			int textureID = noteSkins.getItemIndex(segment.isGuide ? NoteSkinItem::TouchLine : NoteSkinItem::LongNote);
 			if (textureID == -1)
 				continue;
-			const Texture& pathTexture = ResourceManager::textures[textureID];
+			const Texture& texture = ResourceManager::textures[textureID];
 			const int sprIndex = (!holdStart.critical ? 1 : 3);
-			if (!isArrayIndexInBounds(sprIndex, pathTexture.sprites))
+			if (!isArrayIndexInBounds(sprIndex, texture.sprites))
 				continue;
-			const Sprite& pathSprite = pathTexture.sprites[sprIndex];
+			const Sprite& segmentSprite = texture.sprites[sprIndex];
 
+			double segmentHead_stm = std::min(segment.headTime, segment.tailTime);
+			double segmentTail_stm = std::max(segment.headTime, segment.tailTime);
 			// Clamp the segment to be within the visible stage
-			float pathStart_tm = std::max(segment.headTime, scaled_tm);
-			float pathEnd_tm = std::min(segment.tailTime, scaled_tm + noteDuration);
-			
-			const int steps = (segment.ease == EaseType::Linear ? 10 : 15)
-				+ static_cast<int>(std::log(std::max((pathEnd_tm - pathStart_tm) / noteDuration, 4.5399e-5f)) + 0.5f); // Reduce steps if the segment is relatively small
-			const auto ease = getEaseFunction(segment.ease);
-			const Note& segmentStart = context.score.notes.at(segment.headID);
-			float startLeft = Engine::laneToLeft(segmentStart.lane);
-			float startRight = Engine::laneToLeft(segmentStart.lane) + segmentStart.width;
-			const Note& segmentEnd = context.score.notes.at(segment.tailID);
-			float endLeft = Engine::laneToLeft(segmentEnd.lane);
-			float endRight = Engine::laneToLeft(segmentEnd.lane) + segmentEnd.width;
+			double segmentStart_stm = std::max(segmentHead_stm, current_stm);
+			double segmentEnd_stm = std::min(segmentTail_stm, visible_stm);
+			double segmentStartProgress, segmentEndProgress, holdStartProgress, holdEndProgress;
 
-			if (scaled_tm > segment.headTime && context.score.holdNotes.at(holdStart.ID).startType == HoldNoteType::Normal)
+			if (!isSegmentActivated)
 			{
-				float t = unlerp(segment.headTime, segment.tailTime, scaled_tm);
-				float l = ease(startLeft, endLeft, t), r = ease(startRight, endRight, t);
-				drawNoteBase(renderer, holdStart, l, r, 1, segment.startTime / total_tm);
+				segmentStartProgress = 0;
+				segmentEndProgress = unlerpD(segmentHead_stm, segmentTail_stm, segmentEnd_stm);
+			}
+			else
+			{
+				segmentStartProgress = unlerpD(segment.startTime, segment.endTime, current_tm);
+				segmentEndProgress = lerpD(segmentStartProgress, 1.0, unlerpD(current_stm, segmentTail_stm, segmentEnd_stm));
+			}
+
+			const int steps = (segment.ease == EaseType::Linear ? 10 : 15)
+				+ static_cast<int>(std::log(std::max((segmentEnd_stm - segmentStart_stm) / noteDuration, 4.5399e-5)) + 0.5); // Reduce steps if the segment is relatively small
+			const auto ease = getEaseFunction(segment.ease);
+			float startLeft = segment.headLeft;
+			float startRight = segment.headRight;
+			float endLeft = segment.tailLeft;
+			float endRight = segment.tailRight;
+
+			if (isSegmentActivated && context.score.holdNotes.at(holdStart.ID).startType == HoldNoteType::Normal)
+			{
+				float l = ease(startLeft, endLeft, segmentStartProgress), r = ease(startRight, endRight, segmentStartProgress);
+				drawNoteBase(renderer, holdStart, l, r, 1, segment.activeTime / total_tm);
 				if (holdStart.friction)
 					drawTraceDiamond(renderer, holdStart, l, r, 1);
 			}
@@ -644,239 +722,90 @@ namespace MikuMikuWorld
 
 			if (segment.isGuide)
 			{
-				holdStart_tm = accumulateScaledDuration(holdStart.tick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
-				holdEnd_tm = accumulateScaledDuration(holdEnd.tick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+				const HoldNote& hold = context.score.holdNotes.at(holdStart.ID);
+				// We'll assume guide don't have HoldStepType::Skip
+				double totalJoints = 1 + hold.steps.size();
+				double headProgress = segment.tailStepIndex / totalJoints;
+				double tailProgress = (segment.tailStepIndex + 1) / totalJoints;
+
+				double holdStart_stm = accumulateScaledDuration(holdStart.tick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+				double holdEnd_stm = accumulateScaledDuration(holdEnd.tick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+				
+				if (!isSegmentActivated)
+				{
+					holdStartProgress = headProgress;
+					holdEndProgress = lerpD(headProgress, tailProgress, unlerpD(segmentHead_stm, segmentTail_stm, segmentEnd_stm));
+				}
+				else
+				{
+					holdStartProgress = lerpD(headProgress, tailProgress, unlerp(segment.startTime, segment.endTime, current_tm));
+					holdEndProgress = lerpD(holdStartProgress, tailProgress, unlerpD(current_stm, segment.tailTime, segmentEnd_stm));
+				}
 			}
+
+			double from_percentage = 0;
+			double stepStart_stm = segmentStart_stm;
+			double stepTop = Engine::approach(stepStart_stm - noteDuration, stepStart_stm, current_stm);
+			double stepStartProgress = segmentStartProgress;
+
+			auto model = DirectX::XMMatrixIdentity();
+			float alpha = segment.isGuide ? config.pvGuideAlpha : config.pvHoldAlpha;
+			int zIndex = Engine::getZIndex(segment.isGuide ? SpriteLayer::GUIDE_PATH : SpriteLayer::HOLD_PATH, holdStartCenter, segment.activeTime / total_tm);
 
 			for (int i = 0; i < steps; i++)
 			{
-				float from_percentage = float(i) / steps, to_percentage = float(i + 1) / steps;
-				float stepStart_tm = lerp(pathStart_tm, pathEnd_tm, from_percentage);
-				float stepEnd_tm = lerp(pathStart_tm, pathEnd_tm, to_percentage);
+				double to_percentage = double(i + 1) / steps;
+				double stepEnd_stm = lerpD(segmentStart_stm, segmentEnd_stm, to_percentage);
+				double stepBottom = Engine::approach(stepEnd_stm - noteDuration, stepEnd_stm, current_stm);
+				double stepEndProgress = lerpD(segmentStartProgress, segmentEndProgress, to_percentage);
 
-				float stepTop    = Engine::approach(stepStart_tm - noteDuration, stepStart_tm, scaled_tm);
-				float stepBottom = Engine::approach(stepEnd_tm   - noteDuration, stepEnd_tm  , scaled_tm);
-
-				// Since we clamped the segment to only the visible parts
-				// We need to figure out which part of the segment we are on
-				float t_stepStart = unlerp(segment.headTime, segment.tailTime, stepStart_tm);
-				float   t_stepEnd = unlerp(segment.headTime, segment.tailTime, stepEnd_tm);
-
-				float stepStartLeft = ease(startLeft, endLeft, t_stepStart);
-				float   stepEndLeft = ease(startLeft, endLeft, t_stepEnd);
-				float stepStartRight = ease(startRight, endRight, t_stepStart);
-				float   stepEndRight = ease(startRight, endRight, t_stepEnd);
+				float stepStartLeft = ease(startLeft, endLeft, stepStartProgress);
+				float   stepEndLeft = ease(startLeft, endLeft, stepEndProgress);
+				float stepStartRight = ease(startRight, endRight, stepStartProgress);
+				float   stepEndRight = ease(startRight, endRight, stepEndProgress);
 
 				auto vPos = Engine::perspectiveQuadvPos(stepStartLeft, stepEndLeft, stepStartRight, stepEndRight, stepTop, stepBottom);
-				auto model = DirectX::XMMatrixIdentity();
-				float alpha = config.pvHoldAlpha;
-				int zIndex = Engine::getZIndex(SpriteLayer::HOLD_PATH, holdStartCenter, segment.headTime / total_tm);
 
 				float spr_x1, spr_x2, spr_y1, spr_y2;
 				if (segment.isGuide)
 				{
-					spr_x1 = pathSprite.getX1() + GUIDE_XCUTOFF;
-					spr_x2 = pathSprite.getX2() - GUIDE_XCUTOFF;
-					spr_y1 = lerp(pathSprite.getY2() - GUIDE_Y_BOTTOM_CUTOFF, pathSprite.getY1() + GUIDE_Y_TOP_CUTOFF, unlerp(holdStart_tm, holdEnd_tm, stepStart_tm));
-					spr_y2 = lerp(pathSprite.getY2() - GUIDE_Y_BOTTOM_CUTOFF, pathSprite.getY1() + GUIDE_Y_TOP_CUTOFF, unlerp(holdStart_tm, holdEnd_tm, stepEnd_tm));
+					spr_x1 = segmentSprite.getX1() + GUIDE_XCUTOFF;
+					spr_x2 = segmentSprite.getX2() - GUIDE_XCUTOFF;
+					spr_y1 = lerp(segmentSprite.getY2() - GUIDE_Y_BOTTOM_CUTOFF, segmentSprite.getY1() + GUIDE_Y_TOP_CUTOFF, lerpD(holdStartProgress, holdEndProgress, from_percentage));
+					spr_y2 = lerp(segmentSprite.getY2() - GUIDE_Y_BOTTOM_CUTOFF, segmentSprite.getY1() + GUIDE_Y_TOP_CUTOFF, lerpD(holdStartProgress, holdEndProgress, to_percentage));
 				}
 				else
 				{
-					spr_x1 = pathSprite.getX1() + HOLD_XCUTOFF;
-					spr_x2 = pathSprite.getX2() - HOLD_XCUTOFF;
-					spr_y1 = pathSprite.getY1();
-					spr_y2 = pathSprite.getY2();
+					spr_x1 = segmentSprite.getX1() + HOLD_XCUTOFF;
+					spr_x2 = segmentSprite.getX2() - HOLD_XCUTOFF;
+					spr_y1 = segmentSprite.getY1();
+					spr_y2 = segmentSprite.getY2();
 				}
 
-				if (config.pvHoldAnimation && isActivated && isArrayIndexInBounds(sprIndex - 1, pathTexture.sprites))
+				if (config.pvHoldAnimation && isHoldActivated && isArrayIndexInBounds(sprIndex - 1, texture.sprites))
 				{
-					const Sprite& activeSprite = pathTexture.sprites[sprIndex - 1];
-					const int norm2ActiveOffset = activeSprite.getY1() - pathSprite.getY1();
-					float delta_tm = current_tm - segment.startTime;
+					const Sprite& activeSprite = texture.sprites[sprIndex - 1];
+					const int norm2ActiveOffset = activeSprite.getY1() - segmentSprite.getY1();
+					double delta_tm = current_tm - segment.activeTime;
 					float normalAplha = (std::cos(delta_tm * NUM_PI * 2) + 2) / 3.;
 
-					renderer->drawQuad(vPos, model, pathTexture, spr_x1, spr_x2, spr_y1, spr_y2, defaultTint.scaleAlpha(alpha * normalAplha), zIndex);
-					renderer->drawQuad(vPos, model, pathTexture, spr_x1, spr_x2, spr_y1 + norm2ActiveOffset, spr_y2 + norm2ActiveOffset, defaultTint.scaleAlpha(alpha * (1.f - normalAplha)), zIndex);
+					renderer->drawQuad(vPos, model, texture, spr_x1, spr_x2, spr_y1, spr_y2, defaultTint.scaleAlpha(alpha * normalAplha), zIndex);
+					renderer->drawQuad(vPos, model, texture, spr_x1, spr_x2, spr_y1 + norm2ActiveOffset, spr_y2 + norm2ActiveOffset, defaultTint.scaleAlpha(alpha * (1.f - normalAplha)), zIndex);
 				}
 				else
-					renderer->drawQuad(vPos, model, pathTexture, spr_x1, spr_x2, spr_y1, spr_y2, defaultTint.scaleAlpha(alpha), zIndex);
-			}
-		}
-	}
+					renderer->drawQuad(vPos, model, texture, spr_x1, spr_x2, spr_y1, spr_y2, defaultTint.scaleAlpha(alpha), zIndex);
 
-	void ScorePreviewWindow::drawUnblendParticles(const ScoreContext &context, Renderer *renderer)
-	{
-		const float current_tm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
-		int particleTexId = ResourceManager::getTexture("particles");
-		if (particleTexId < 0) return;
-		const Texture& texture = ResourceManager::textures[particleTexId];
-		const Engine::DrawData& drawData = context.scorePreviewDrawData;
-		for (auto& particle : drawData.drawingLaneEffects)
-		{
-			if (current_tm < particle.time.min || current_tm >= particle.time.max)
-				continue;
-			Particle& particleData = ResourceManager::particleEffects[particle.effectType].particles[particle.particleId];
-			float progress = Engine::getParticleProgress((ParticleEffectType)particle.effectType, particleData, current_tm, particle.time.min, particle.time.max);
-			const Note& note = context.score.notes.at(particle.refID);
-			float noteLeft = Engine::laneToLeft(note.lane), noteRight = Engine::laneToLeft(note.lane) + note.width;
-			if (config.pvMirrorScore) std::swap(noteLeft *= -1, noteRight *= -1);
-			float noteCenter = noteLeft + (noteRight - noteLeft) / 2;
-			auto vPos =  Engine::perspectiveQuadvPos(noteLeft, noteRight, Engine::STAGE_LANE_TOP / Engine::STAGE_LANE_HEIGHT, Engine::STAGE_TEX_HEIGHT / Engine::STAGE_LANE_HEIGHT);
-			drawParticle(renderer, vPos, particle, progress, texture, texture.sprites[particleData.spriteID], Engine::getZIndex(SpriteLayer::UNDER_NOTE_EFFECT, noteCenter, 1 - progress));
-		}
-		size_t transIdx = static_cast<size_t>(SpriteType::Slot);
-		if (!isArrayIndexInBounds(transIdx, ResourceManager::spriteTransforms)) return;
-		const auto& slotTransform = ResourceManager::spriteTransforms[transIdx];
-		for (auto& particle : drawData.drawingSlotEffects)
-		{
-			if (current_tm < particle.time.min || current_tm >= particle.time.max)
-				continue;
-			Particle& particleData = ResourceManager::particleEffects[particle.effectType].particles[particle.particleId];
-			float progress = Engine::getParticleProgress((ParticleEffectType)particle.effectType, particleData, current_tm, particle.time.min, particle.time.max);
-			const Note& note = context.score.notes.at(particle.refID);
-			const Sprite& sprite = texture.sprites[particleData.spriteID];
-			DirectX::XMMATRIX model = DirectX::XMMatrixIdentity();
-			std::array<DirectX::XMFLOAT4, 4> vPos;
-			float slotLeft = Engine::laneToLeft(note.lane), slotTop = 1 - Engine::getNoteHeight(), slotBottom = 1 + Engine::getNoteHeight();
-			float alpha = particle.xywhta[5].at(progress);
-			if (config.pvMirrorScore) slotLeft = (slotLeft + note.width) * -1;
-			for (int i = 0; i < note.width; i++)
-			{
-				vPos = slotTransform.apply(Engine::perspectiveQuadvPos(slotLeft + i, slotLeft + i + 1.f, slotTop, slotBottom));
-				renderer->drawQuad(vPos, model, texture, sprite.getX1(), sprite.getX2(), sprite.getY2(), sprite.getY1(),
-					defaultTint.scaleAlpha(alpha), Engine::getZIndex(SpriteLayer::UNDER_NOTE_EFFECT, slotLeft + 0.5f, 1 - progress)
-				);
+				from_percentage = to_percentage;
+				stepStart_stm = stepEnd_stm;
+				stepTop = stepBottom;
+				stepStartProgress = stepEndProgress;
 			}
-		}
-	}
-
-	void ScorePreviewWindow::drawParticles(const ScoreContext &context, Renderer *renderer)
-	{
-		const float current_tm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
-		int particleTexId = ResourceManager::getTexture("particles");
-		if (particleTexId < 0) return;
-		const Texture& texture = ResourceManager::textures[particleTexId];
-		const Engine::DrawData& drawData = context.scorePreviewDrawData;
-		for (auto& particle : drawData.drawingCircularEffects)
-		{
-			if (current_tm <= particle.time.min || current_tm >= particle.time.max)
-				continue;
-			Particle& particleData = ResourceManager::particleEffects[particle.effectType].particles[particle.particleId];
-			float progress = Engine::getParticleProgress((ParticleEffectType)particle.effectType, particleData, current_tm, particle.time.min, particle.time.max);
-			const Note& note = context.score.notes.at(particle.refID);
-			float cirularWidth, circularHeight, noteLeft, noteRight;
-			switch ((ParticleEffectType)particle.effectType)
-			{
-			case ParticleEffectType::NoteLongSegmentCircular:
-			case ParticleEffectType::NoteLongCriticalSegmentCircular:
-				cirularWidth = 3.5;
-				circularHeight = 2.1;
-				std::tie(noteLeft, noteRight) = getHoldSegmentBound(note, context.score, context.currentTick);
-				break;
-			default:
-				cirularWidth = 1.75;
-				circularHeight = 1.05;
-				std::tie(noteLeft, noteRight) = getNoteBound(note);
-				break;
-			}
-			float noteCenter = noteLeft + (noteRight - noteLeft) / 2;
-			drawParticle(renderer,
-				Engine::circularQuadvPos(noteCenter, cirularWidth, circularHeight * scaledAspectRatio),
-				particle, progress, texture, texture.sprites[particleData.spriteID],
-				Engine::getZIndex(SpriteLayer::PARTICLE_EFFECT, noteCenter, float(note.tick) / context.scorePreviewDrawData.maxTicks)
-			);
-		}
-		for (auto& particle : drawData.drawingLinearEffects)
-		{
-			if (current_tm <= particle.time.min || current_tm >= particle.time.max)
-				continue;
-			Particle& particleData = ResourceManager::particleEffects[particle.effectType].particles[particle.particleId];
-			float progress = Engine::getParticleProgress((ParticleEffectType)particle.effectType, particleData, current_tm, particle.time.min, particle.time.max);
-			const Note& note = context.score.notes.at(particle.refID);
-			float noteLeft, noteRight, shear = 0;
-			switch ((ParticleEffectType)particle.effectType)
-			{
-			case ParticleEffectType::NoteLongSegmentLinear:
-			case ParticleEffectType::NoteLongCriticalSegmentLinear:
-			case ParticleEffectType::NoteLongSegmentCircularEx:
-			case ParticleEffectType::NoteLongCriticalSegmentCircularEx:
-				std::tie(noteLeft, noteRight) = getHoldSegmentBound(note, context.score, context.currentTick);
-				break;
-			case ParticleEffectType::NoteFlickDirectional:
-			case ParticleEffectType::NoteCriticalDirectional:
-				shear = (config.pvMirrorScore ? -1 : 1) * (note.flick == FlickType::Left ? -1 : (note.flick == FlickType::Right ? 1 : 0));
-			default:
-				std::tie(noteLeft, noteRight) = getNoteBound(note);
-				break;
-			}
-			float noteCenter = noteLeft + (noteRight - noteLeft) / 2;
-			drawParticle(renderer,
-				Engine::linearQuadvPos(noteCenter, 1.0, 1.0 * scaledAspectRatio, shear),
-				particle, progress, texture, texture.sprites[particleData.spriteID],
-				Engine::getZIndex(SpriteLayer::PARTICLE_EFFECT, noteCenter, float(note.tick) / context.scorePreviewDrawData.maxTicks)
-			);
-		}
-		for (auto& particle : drawData.drawingFlatEffects)
-		{
-			if (current_tm <= particle.time.min || current_tm >= particle.time.max)
-				continue;
-			Particle& particleData = ResourceManager::particleEffects[particle.effectType].particles[particle.particleId];
-			float progress = Engine::getParticleProgress((ParticleEffectType)particle.effectType, particleData, current_tm, particle.time.min, particle.time.max);
-			const Note& note = context.score.notes.at(particle.refID);
-			float noteLeft, noteRight;
-			switch ((ParticleEffectType)particle.effectType)
-			{
-			case ParticleEffectType::NoteLongAmongCircular:
-			case ParticleEffectType::NoteLongAmongCriticalCircular:
-				std::tie(noteLeft, noteRight) = getHoldStepBound(note, context.score, context.currentTick);
-				break;
-			default:
-				std::tie(noteLeft, noteRight) = getNoteBound(note);
-				break;
-			}
-			float noteCenter = noteLeft + (noteRight - noteLeft) / 2;
-			drawParticle(
-				renderer, Engine::quadvPos(noteCenter - 4, noteCenter + 4, 1 - 4 * scaledAspectRatio, 1 + 4 * scaledAspectRatio),
-				particle, progress, texture, texture.sprites[particleData.spriteID],
-				Engine::getZIndex(SpriteLayer::PARTICLE_EFFECT, noteCenter, float(note.tick) / context.scorePreviewDrawData.maxTicks)
-			);
-		}
-		for (auto& particle : drawData.drawingSlotGlowEffects)
-		{
-			if (current_tm <= particle.time.min || current_tm >= particle.time.max)
-				continue;
-			Particle& particleData = ResourceManager::particleEffects[particle.effectType].particles[particle.particleId];
-			float progress = Engine::getParticleProgress((ParticleEffectType)particle.effectType, particleData, current_tm, particle.time.min, particle.time.max);
-			const Note& note = context.score.notes.at(particle.refID);
-			float noteLeft, noteRight;
-			switch ((ParticleEffectType)particle.effectType)
-			{
-			case ParticleEffectType::SlotGlowNoteLongSegment:
-			case ParticleEffectType::SlotGlowNoteLongCriticalSegment:
-				std::tie(noteLeft, noteRight) = getHoldSegmentBound(note, context.score, context.currentTick);
-				break;
-			default:
-				std::tie(noteLeft, noteRight) = getNoteBound(note);
-				break;
-			}
-			std::array<DirectX::XMFLOAT4, 4> layout = {{
-				{ noteRight * 1.25f, scaledAspectRatio * 4.25f, 0.0f, 1.0f },
-				{ noteRight, 		 1.0f,                      0.0f, 1.0f },
-				{ noteLeft, 		 1.0f,                      0.0f, 1.0f },
-				{ noteLeft * 1.25f,  scaledAspectRatio * 4.25f, 0.0f, 1.0f }
-			}};
-			float noteCenter = noteLeft + (noteRight - noteLeft) / 2;
-			
-			drawParticle(
-				renderer, layout, particle, progress, texture, texture.sprites[particleData.spriteID],
-				Engine::getZIndex(SpriteLayer::SLOT_GLOW_EFFECT, noteCenter, float(note.tick) / context.scorePreviewDrawData.maxTicks)
-			);
 		}
 	}
 
 	void ScorePreviewWindow::drawNoteBase(Renderer* renderer, const Note& note, float noteLeft, float noteRight, float y, float zScalar)
 	{
-		if (noteTextures.notes == -1)
+		if (noteSkins.getItemIndex(NoteSkinItem::Notes) == -1)
 			return;
 
 		const Texture& texture = getNoteTexture();
@@ -912,14 +841,14 @@ namespace MikuMikuWorld
 		auto model = DirectX::XMMatrixScaling(y, y, 1.f);
 		std::array<DirectX::XMFLOAT4, 4> vPos;
 		// Middle
-		vPos = mTransform.apply(Engine::perspectiveQuadvPos(noteLeft + 0.3f, noteRight - 0.3f, noteTop, noteBottom));
+		vPos = mTransform.apply(Engine::perspectiveQuadvPos(noteLeft + 0.25f, noteRight - 0.3f, noteTop, noteBottom));
 		renderer->drawQuad(vPos, model, texture,
 			sprite.getX1() + NOTE_SIDE_WIDTH, sprite.getX2() - NOTE_SIDE_WIDTH, sprite.getY1(), sprite.getY2(),
 			defaultTint, zIndex
 		);
 
 		// Left slice
-		vPos = lTransform.apply(Engine::perspectiveQuadvPos(noteLeft, noteLeft + 0.3f, noteTop, noteBottom));
+		vPos = lTransform.apply(Engine::perspectiveQuadvPos(noteLeft, noteLeft + 0.25f, noteTop, noteBottom));
 		renderer->drawQuad(vPos, model, texture,
 			sprite.getX1() + NOTE_SIDE_PAD, sprite.getX1() + NOTE_SIDE_WIDTH, sprite.getY1(), sprite.getY2(),
 			defaultTint, zIndex
@@ -935,7 +864,7 @@ namespace MikuMikuWorld
 
 	void ScorePreviewWindow::drawTraceDiamond(Renderer *renderer, const Note &note, float noteLeft, float noteRight, float y)
 	{
-		if (noteTextures.notes == -1)
+		if (noteSkins.getItemIndex(NoteSkinItem::Notes) == -1)
 			return;
 			
 		const Texture& texture = getNoteTexture();
@@ -965,9 +894,9 @@ namespace MikuMikuWorld
 		renderer->drawQuad(vPos, model, texture, frictionSpr.getX1(), frictionSpr.getX2(), frictionSpr.getY1(), frictionSpr.getY2(), defaultTint, zIndex);
 	}
 
-	void ScorePreviewWindow::drawFlickArrow(Renderer *renderer, const Note &note, float y, float time)
+	void ScorePreviewWindow::drawFlickArrow(Renderer *renderer, const Note &note, float y, double time)
 	{
-		if (noteTextures.notes == -1)
+		if (noteSkins.getItemIndex(NoteSkinItem::Notes) == -1)
 			return;
 
 		const Texture& texture = getNoteTexture();
@@ -975,7 +904,7 @@ namespace MikuMikuWorld
 		if (!isArrayIndexInBounds(sprIndex, texture.sprites))
 			return;
 		const Sprite& arrowSprite = texture.sprites[sprIndex];
-		size_t flickTransformIdx = clamp(note.width, 1, MAX_FLICK_SPRITES) - 1 + static_cast<int>((note.flick == FlickType::Left || note.flick == FlickType::Right) ? SpriteType::FlickArrowLeft : SpriteType::FlickArrowUp);
+		size_t flickTransformIdx = std::clamp(note.width, 1, MAX_FLICK_SPRITES) - 1 + static_cast<int>((note.flick == FlickType::Left || note.flick == FlickType::Right) ? SpriteType::FlickArrowLeft : SpriteType::FlickArrowUp);
 		if (!isArrayIndexInBounds(flickTransformIdx, ResourceManager::spriteTransforms))
 			return;
 		const SpriteTransform& transform = ResourceManager::spriteTransforms[flickTransformIdx];
@@ -983,7 +912,7 @@ namespace MikuMikuWorld
 		const int mirror = config.pvMirrorScore ? -1 : 1;
 		const int flickDirection = mirror * (note.flick == FlickType::Left ? -1 : (note.flick == FlickType::Right ? 1 : 0));
 		const float center = Engine::getNoteCenter(note) * mirror;
-		const float w = clamp(note.width, 0, MAX_FLICK_SPRITES) * (note.flick == FlickType::Right ? -1 : 1) * mirror / 4.f;
+		const float w = std::clamp(note.width, 0, MAX_FLICK_SPRITES) * (note.flick == FlickType::Right ? -1 : 1) * mirror / 4.f;
 		
 		auto vPos = transform.apply(
 			Engine::quadvPos(
@@ -996,8 +925,8 @@ namespace MikuMikuWorld
 		
 		if (config.pvFlickAnimation)
 		{
-			float t = std::fmod(time, 0.5f) / 0.5f;
-			const auto cubicEaseIn = [](float t) { return t * t * t; };
+			double t = std::fmod(time, 0.5) / 0.5;
+			const auto cubicEaseIn = [](double t) { return t * t * t; };
 			auto animationVector = DirectX::XMVectorScale(DirectX::XMVectorSet(flickDirection, -2 * scaledAspectRatio, 0.f, 0.f), t);
 			auto model = DirectX::XMMatrixTranslationFromVector(animationVector) * DirectX::XMMatrixScaling(y, y, 1.f);
 			
@@ -1017,72 +946,20 @@ namespace MikuMikuWorld
 		}
 	}
 
-	void ScorePreviewWindow::drawParticle(Renderer* renderer, const std::array<DirectX::XMFLOAT4, 4>& layout, const Engine::DrawingParticle& particle,
-		float progress, const Texture& texture, const Sprite& sprite, int zIndex)
-	{
-		const float x = particle.xywhta[0].at(progress);
-		const float y = particle.xywhta[1].at(progress);
-		const float w = particle.xywhta[2].at(progress);
-		const float h = particle.xywhta[3].at(progress);
-		const float t = particle.xywhta[4].at(progress);
-		const float a = particle.xywhta[5].at(progress);
-		const DirectX::XMVECTOR sx = DirectX::XMVectorSet( w,  w, -w, -w );
-		const DirectX::XMVECTOR sy = DirectX::XMVectorSet( h, -h, -h,  h );
-		const DirectX::XMVECTOR px = DirectX::XMVectorScale(
-			DirectX::XMVectorAdd(
-				DirectX::XMVectorReplicate(x + 1),
-				DirectX::XMVectorSubtract(
-					DirectX::XMVectorScale(sx, std::cos(t)),
-					DirectX::XMVectorScale(sy, std::sin(t))
-				)
-			),
-			0.5f
-		);
-		
-		const DirectX::XMVECTOR py = DirectX::XMVectorScale(
-			DirectX::XMVectorAdd(
-				DirectX::XMVectorReplicate(y + 1),
-				DirectX::XMVectorAdd(
-					DirectX::XMVectorScale(sy, std::cos(t)),
-					DirectX::XMVectorScale(sx, std::sin(t))
-				)
-			),
-			0.5f
-		);
-		const DirectX::XMVECTOR tx = DirectX::XMVectorLerpV(DirectX::XMVectorReplicate(layout[2].x), DirectX::XMVectorReplicate(layout[1].x), px);
-		const DirectX::XMVECTOR ty = DirectX::XMVectorLerpV(DirectX::XMVectorReplicate(layout[2].y), DirectX::XMVectorReplicate(layout[1].y), px);
-		const DirectX::XMVECTOR bx = DirectX::XMVectorLerpV(DirectX::XMVectorReplicate(layout[3].x), DirectX::XMVectorReplicate(layout[0].x), px);
-		const DirectX::XMVECTOR by = DirectX::XMVectorLerpV(DirectX::XMVectorReplicate(layout[3].y), DirectX::XMVectorReplicate(layout[0].y), px);
-
-		const DirectX::XMVECTOR vx = DirectX::XMVectorLerpV(tx, bx, py);
-		const DirectX::XMVECTOR vy = DirectX::XMVectorLerpV(ty, by, py);
-
-		DirectX::XMFLOAT4 posX, posY;
-		DirectX::XMStoreFloat4(&posX, vx);
-		DirectX::XMStoreFloat4(&posY, vy);
-
-		std::array<DirectX::XMFLOAT4, 4> vPos = {{
-			{posX.x, posY.x, 0, 1},
-			{posX.y, posY.y, 0, 1},
-			{posX.z, posY.z, 0, 1},
-			{posX.w, posY.w, 0, 1}
-		}};
-
-		renderer->drawQuad(vPos, DirectX::XMMatrixIdentity(), texture, sprite.getX1(), sprite.getX2(), sprite.getY1(), sprite.getY2(), defaultTint.scaleAlpha(a), zIndex);
-	}
-	
 	void ScorePreviewWindow::updateToolbar(ScoreEditorTimeline &timeline, ScoreContext &context) const
 	{
 		static float lastHoveredTime = -1;
-		constexpr float maxNoHoverTime = 1.5f;
+		constexpr float MAX_NO_HOVER_TIME = 1.5f;
 		static float toolBarWidth = UI::btnNormal.x * 2;
+		if (!config.pvDrawToolbar)
+			return;
 		ImGuiIO io = ImGui::GetIO();
 		ImGui::SetNextWindowPos(ImGui::GetWindowPos() + ImVec2{
 			ImGui::GetContentRegionAvail().x - ImGui::GetStyle().WindowPadding.x * 4 - toolBarWidth,
 			ImGui::GetStyle().WindowPadding.y * 5
 		});
 		ImGui::SetNextWindowSizeConstraints({48, 0}, {120, FLT_MAX}, NULL);
-		float childBgAlpha = clamp(Engine::easeInCubic(unlerp(maxNoHoverTime, 0, lastHoveredTime)), 0.25f, 1.f);
+		float childBgAlpha = std::clamp(easeInCubic(unlerp(MAX_NO_HOVER_TIME, 0, lastHoveredTime)), 0.25f, 1.f);
 		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.f);
 		
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetColorU32(ImGuiCol_WindowBg, childBgAlpha));
@@ -1091,23 +968,23 @@ namespace MikuMikuWorld
 		ImGui::Begin("###preview_toolbar", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_ChildWindow);
 		toolBarWidth = ImGui::GetWindowWidth();
 		float centeredXBtn = toolBarWidth / 2 - UI::btnNormal.x / 2;
-		if (ImGui::IsWindowHovered())
+		if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
 			lastHoveredTime = 0;
 		else
-			lastHoveredTime = std::min(io.DeltaTime + lastHoveredTime, maxNoHoverTime);
+			lastHoveredTime = std::min(io.DeltaTime + lastHoveredTime, MAX_NO_HOVER_TIME);
 
 		ImGui::SetCursorPosX(centeredXBtn);
-		if (UI::transparentButton(ICON_FA_ANGLE_DOUBLE_UP, UI::btnNormal, true, context.currentTick > 0))
+		if (UI::transparentButton(ICON_FA_ANGLE_DOUBLE_UP, UI::btnNormal, true, context.currentTick < context.scorePreviewDrawData.maxTicks + TICKS_PER_BEAT))
 		{
 			if (timeline.isPlaying()) timeline.setPlaying(context, false);
-			context.currentTick = std::max(timeline.roundTickDown(context.currentTick, timeline.getDivision()) - (TICKS_PER_BEAT / (timeline.getDivision() / 4)), 0);
+			context.currentTick = timeline.roundTickDown(context.currentTick, timeline.getDivision()) + (TICKS_PER_BEAT / (timeline.getDivision() / 4));
 		}
 
 		ImGui::SetCursorPosX(centeredXBtn);
-		if (UI::transparentButton(ICON_FA_ANGLE_UP, UI::btnNormal, true, context.currentTick > 0))
+		if (UI::transparentButton(ICON_FA_ANGLE_UP, UI::btnNormal, true, context.currentTick < context.scorePreviewDrawData.maxTicks + TICKS_PER_BEAT))
 		{
 			if (timeline.isPlaying()) timeline.setPlaying(context, false);
-			context.currentTick--;
+			context.currentTick++;
 		}
 
 		ImGui::SetCursorPosX(centeredXBtn);
@@ -1119,18 +996,22 @@ namespace MikuMikuWorld
 			timeline.setPlaying(context, !timeline.isPlaying());
 
 		ImGui::SetCursorPosX(centeredXBtn);
-		if (UI::transparentButton(ICON_FA_ANGLE_DOWN, UI::btnNormal, true, context.currentTick < context.scorePreviewDrawData.maxTicks + TICKS_PER_BEAT))
+		if (UI::transparentButton(ICON_FA_ANGLE_DOWN, UI::btnNormal, true, context.currentTick > 0))
 		{
 			if (timeline.isPlaying()) timeline.setPlaying(context, false);
-			context.currentTick++;
+			context.currentTick--;
 		}
 
 		ImGui::SetCursorPosX(centeredXBtn);
-		if (UI::transparentButton(ICON_FA_ANGLE_DOUBLE_DOWN, UI::btnNormal, true, context.currentTick < context.scorePreviewDrawData.maxTicks + TICKS_PER_BEAT))
+		if (UI::transparentButton(ICON_FA_ANGLE_DOUBLE_DOWN, UI::btnNormal, true, context.currentTick > 0))
 		{
 			if (timeline.isPlaying()) timeline.setPlaying(context, false);
-			context.currentTick = timeline.roundTickDown(context.currentTick, timeline.getDivision()) + (TICKS_PER_BEAT / (timeline.getDivision() / 4));
+			context.currentTick = std::max(timeline.roundTickDown(context.currentTick, timeline.getDivision()) - (TICKS_PER_BEAT / (timeline.getDivision() / 4)), 0);
 		}
+
+		ImGui::SetCursorPosX(centeredXBtn);
+		if (UI::transparentButton(isFullWindow() ? ICON_FA_COMPRESS : ICON_FA_EXPAND))
+			fullWindow = !isFullWindow();
 
 		ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal);
 
@@ -1149,7 +1030,7 @@ namespace MikuMikuWorld
 		ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal);
 
 		float currentTm = accumulateDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges);
-		float currentScaledTm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
+		double currentScaledTm = accumulateScaledDuration(context.currentTick, TICKS_PER_BEAT, context.score.tempoChanges, context.score.hiSpeedChanges);
 		int currentMeasure = accumulateMeasures(context.currentTick, TICKS_PER_BEAT, context.score.timeSignatures);
 		const TimeSignature& ts = context.score.timeSignatures[findTimeSignature(currentMeasure, context.score.timeSignatures)];
 		const Tempo& tempo = getTempoAt(context.currentTick, context.score.tempoChanges);
@@ -1157,12 +1038,12 @@ namespace MikuMikuWorld
 		float speed = (hiSpeedIdx == -1 ? 1.0f : context.score.hiSpeedChanges[hiSpeedIdx].speed);
 
 		char rhythmString[256];
-		snprintf(rhythmString, sizeof(rhythmString), "%02d:%02d:%02d|%.2fs|%d/%d|%g BPM|%gx",
+		snprintf(rhythmString, sizeof(rhythmString), "%02d:%02d:%02d|%.2fs|%d/%d|%g BPM|%sx",
 			static_cast<int>(currentTm / 60), static_cast<int>(std::fmod(currentTm, 60.f)), static_cast<int>(std::fmod(currentTm * 100, 100.f)),
 			currentScaledTm,
 			ts.numerator, ts.denominator,
 			tempo.bpm,
-			speed
+			IO::formatFixedFloatTrimmed(speed).c_str()
 		);
 		char* str = strtok(rhythmString, "|");
 		ImGui::SetCursorPosX(toolBarWidth / 2 - ImGui::CalcTextSize(str).x / 2);
@@ -1202,7 +1083,7 @@ namespace MikuMikuWorld
 		ImVec2 scrollMaxSize = ImGui::GetWindowContentRegionMax();
 		int maxTicks = std::max(context.scorePreviewDrawData.maxTicks, 1);
 		float scrollRatio = std::min(Engine::getNoteDuration(config.pvNoteSpeed) / accumulateDuration(context.scorePreviewDrawData.maxTicks, TICKS_PER_BEAT, context.score.tempoChanges), 1.f);
-		float progress = std::min(float(context.currentTick) / maxTicks, 1.f);
+		float progress = 1.f - std::min(float(context.currentTick) / maxTicks, 1.f);
 		float handleHeight = std::max(20.f, scrollContentSize.y * scrollRatio);
 		
 		bool scrollbarActive = false;
@@ -1228,9 +1109,8 @@ namespace MikuMikuWorld
 		{
 			float absScrollStart = ImGui::GetWindowPos().y + handleSize.y / 2;
 			float absScrollEnd = ImGui::GetWindowPos().y + scrollMaxSize.y - handleSize.y / 2;
-			float mouseProgress = clamp(unlerp(absScrollStart, absScrollEnd, io.MousePos.y), 0.f, 1.f);
-			context.currentTick = std::round(lerp(0, maxTicks, mouseProgress));
-			
+			float mouseProgress = 1.f - std::clamp(unlerp(absScrollStart, absScrollEnd, io.MousePos.y), 0.f, 1.f);
+			context.currentTick = std::round(lerp(0, maxTicks, mouseProgress));	
 		}
 		
 		ImGui::EndChild();

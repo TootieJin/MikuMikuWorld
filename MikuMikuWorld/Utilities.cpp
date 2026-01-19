@@ -1,5 +1,5 @@
 #include "Utilities.h"
-#include "Constants.h"
+#include "Math.h"
 #include "ImGui/imgui.h"
 #include "Localization.h"
 #include "IO.h"
@@ -50,6 +50,64 @@ namespace MikuMikuWorld
 	{
 		ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(str).x) * 0.5f);
 		ImGui::Text(str);
+	}
+
+	bool Utilities::ImGuiTextFilterWithHint(ImGuiTextFilter* imguiTextFilter, const char* label, const char* hint, float width)
+	{
+		if (width != 0.0f)
+			ImGui::SetNextItemWidth(width);
+		bool value_changed = ImGui::InputTextWithHint(label, hint, imguiTextFilter->InputBuf, IM_ARRAYSIZE(imguiTextFilter->InputBuf));
+		if (value_changed)
+			imguiTextFilter->Build();
+		return value_changed;
+	}
+
+	Random globalRandom{};
+
+	float Random::get(float min, float max)
+	{
+		float factor = dist(gen);
+		return lerp(min, max, factor);
+	}
+
+	float Random::get()
+	{
+		return dist(gen);
+	}
+
+	void Random::setSeed(int seed)
+	{
+		gen.seed(seed);
+	}
+
+	uint32_t RandN::xorShift()
+	{
+		uint32_t t = x ^ (x << 11);
+		x = y; y = z; z = w;
+		return w = w ^ (w >> 19) ^ t ^ (t >> 8);
+	}
+
+	uint32_t RandN::nextUInt32()
+	{
+		return xorShift();
+	}
+
+	float RandN::nextFloat()
+	{
+		return 1.0f - nextFloatRange(0.0f, 1.0f);
+	}
+
+	float RandN::nextFloatRange(float min, float max)
+	{
+		return (min - max) * ((float)(xorShift() << 9) / 0xFFFFFFFF) + max;
+	}
+
+	void RandN::setSeed(uint32_t seed)
+	{
+		x = (uint32_t)seed;
+		y = (uint32_t)(MT19937 * x + 1);
+		z = (uint32_t)(MT19937 * y + 1);
+		w = (uint32_t)(MT19937 * z + 1);
 	}
 
 	void drawShadedText(ImDrawList* drawList, ImVec2 textPos, float fontSize, ImU32 fontColor, const char* text)

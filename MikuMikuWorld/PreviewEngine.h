@@ -1,7 +1,5 @@
 #pragma once
 #include <array>
-#include <vector>
-#include <map>
 #include <memory>
 #include "Math.h"
 #include "Score.h"
@@ -32,81 +30,18 @@ namespace MikuMikuWorld
 		FlickArrowLeft,
 		FlickArrowUp = FlickArrowLeft + 6,
 		SimultaneousLine = FlickArrowUp + 6,
-		HoldTick,
-		Slot,
-		SlotGlow
+		HoldTick
 	};
 
 	enum class SpriteLayer : uint8_t
 	{
-		SLOT_GLOW_EFFECT,
-		PARTICLE_EFFECT,
 		FLICK_ARROW,
 		DIAMOND,
 		BASE_NOTE,
 		TICK_NOTE,
 		HOLD_PATH,
+		GUIDE_PATH,
 		UNDER_NOTE_EFFECT
-	};
-
-	enum class ParticleEffectType : uint32_t
-	{
-		Lane,
-		NoteTapLane,
-		NoteCriticalLane,
-		NoteCriticalFlickLane,
-		
-		NoteTapCircular, 
-		NoteTapLinear,
-
-		NoteLongCircular,
-		NoteLongLinear,
-
-		NoteFlickCircular,
-		NoteFlickLinear,
-		NoteFlickDirectional,
-
-		NoteFrictionCircular,
-		NoteFrictionLinear,
-
-		NoteCriticalCircular,
-		NoteCriticalLinear,
-		NoteCriticalDirectional,
-
-		NoteLongCriticalCircular,
-		NoteLongCriticalLinear,
-		
-		NoteCriticalFlickCircular,
-		NoteCriticalFlickLinear,
-
-		NoteFrictionCriticalCircular,
-		NoteFrictionCriticalLinear,
-
-		NoteLongAmongCircular,
-		NoteLongAmongCriticalCircular,
-
-		NoteLongSegmentCircular,
-		NoteLongSegmentCircularEx,
-		NoteLongSegmentLinear,
-
-		NoteLongCriticalSegmentCircular,
-		NoteLongCriticalSegmentCircularEx,
-		NoteLongCriticalSegmentLinear,
-
-		SlotNoteTap,
-		SlotNoteCritical,
-		SlotNoteFlick,
-		SlotNoteLong,
-		
-		SlotGlowNoteTap,
-		SlotGlowNoteCritical,
-		SlotGlowNoteFlick,
-		SlotGlowNoteLong,
-
-		SlotGlowNoteLongSegment,
-		SlotGlowNoteLongCriticalSegment,
-
-		Invalid = UINT32_MAX
 	};
 
 	class SpriteTransform
@@ -120,42 +55,6 @@ namespace MikuMikuWorld
 		SpriteTransform(float v[64]);
 		std::array<DirectX::XMFLOAT4, 4> apply(const std::array<DirectX::XMFLOAT4, 4>& vPos) const;
 	};
-
-	struct ParticleProperty
-	{
-		float from, to;
-		Engine::Easing easing;
-	};
-
-	struct PropertyCoeff
-	{
-		std::unique_ptr<DirectX::XMMATRIX> r1_4, r5_8, sinr1_4, sinr5_8, cosr1_4, cosr5_8;
-
-		DirectX::XMVECTOR compute(const DirectX::XMVECTOR & v1_4, const DirectX::XMVECTOR & v5_8) const;
-	};
-
-	struct Particle
-	{
-		int groupID;
-		int spriteID;
-		Color color;
-		float start;
-		float duration;
-		std::array<ParticleProperty, 6> xywhta;
-		PropertyCoeff xyCoeff, whCoeff, taCoeff;
-
-		// Compute the static range[from, to] for each property from an instance of values
-		std::array<Engine::Range, 6> compute(const std::array<float, 8>& values) const;
-	};
-
-	struct ParticleEffect
-	{
-		std::vector<int> groupSizes;
-		std::vector<Particle> particles;
-	};
-
-	extern std::map<ParticleEffectType, float> particleEffectDuration;
-	extern std::map<ParticleEffectType, ParticleEffectType> particleEffectFallback;
 }
 
 namespace MikuMikuWorld::Engine
@@ -164,19 +63,17 @@ namespace MikuMikuWorld::Engine
 	std::array<DirectX::XMFLOAT4, 4> perspectiveQuadvPos(float left, float right, float top, float bottom);
 	std::array<DirectX::XMFLOAT4, 4> perspectiveQuadvPos(float leftStart, float leftStop, float rightStart, float rightStop, float top, float bottom);
 	std::array<DirectX::XMFLOAT4, 4> quadUV(const Sprite& sprite, const Texture& texture);
-	std::array<DirectX::XMFLOAT4, 4> circularQuadvPos(float lane, float width, float height);
-	std::array<DirectX::XMFLOAT4, 4> linearQuadvPos(float lane, float width, float height, float shear);
 
 	Range getNoteVisualTime(Note const& note, Score const& score, float noteSpeed);
 
 	/// General helper functions for fixed values in the engine
 	static inline float getNoteDuration(float noteSpeed)
 	{
-		return lerp(0.35, 4.f, std::pow(unlerp(12, 1, noteSpeed), 1.31f));
+		return lerpD(0.35, 4.0, std::pow(unlerpD(12, 1, noteSpeed), 1.31));
 	}
-	static inline float approach(float start_time, float end_time, float current_time)
+	static inline double approach(double start_time, double end_time, double current_time)
 	{
-		return std::pow(1.06, 45 * lerp(-1, 0, unlerp(start_time, end_time, current_time)));
+		return std::pow(1.06, 45 * lerpD(-1, 0, unlerpD(start_time, end_time, current_time)));
 	}
 	inline constexpr float STAGE_LANE_TOP = 47;
 	inline constexpr float STAGE_LANE_BOTTOM = 803;
@@ -228,16 +125,8 @@ namespace MikuMikuWorld::Engine
 			- masknShift(y, mask24, 4)
 			- masknShift(x, mask4, 0);
 	}
-	static inline float getParticleProgress(ParticleEffectType type, const Particle& particle, float current_tm, float start_tm, float end_tm)
-	{
-		float effectDuration = particleEffectDuration[type];
-		float particleDuration = particle.duration * effectDuration;
-		float delta_tm = current_tm - start_tm - particle.start * effectDuration;
-		if (delta_tm < 0)
-			return NAN;
-		delta_tm = std::fmod(delta_tm, effectDuration);
-		if (delta_tm > particleDuration)
-			return NAN;
-		return unlerp(0, particleDuration, delta_tm);
-	}
+
+	std::pair<float, float> getNoteBound(const Note& note, bool flip);
+	std::pair<float, float> getHoldStepBound(const Note& note, const Score& score);
+	std::pair<float, float> getHoldSegmentBound(const Note& note, const Score& score, int curTick);
 }

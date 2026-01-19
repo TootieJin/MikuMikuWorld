@@ -10,7 +10,7 @@ using namespace nlohmann;
 namespace MikuMikuWorld
 {
 	ApplicationConfiguration config{};
-	constexpr const char* CONFIG_VERSION{ "1.13.0" };
+	constexpr const char* CONFIG_VERSION{ "1.17.0" };
 
 	ApplicationConfiguration::ApplicationConfiguration() : version{ CONFIG_VERSION }
 	{
@@ -39,6 +39,7 @@ namespace MikuMikuWorld
 			maximized = jsonIO::tryGetValue<bool>(window, "maximized", false);
 			vsync = jsonIO::tryGetValue<bool>(window, "vsync", true);
 			showFPS = jsonIO::tryGetValue<bool>(window, "show_fps", false);
+			fullScreen = jsonIO::tryGetValue<bool>(window, "fullscreen", false);
 
 			windowPos = jsonIO::tryGetValue(window, "position", Vector2{});
 			if (windowPos.x <= 0) windowPos.x = 150;
@@ -54,45 +55,48 @@ namespace MikuMikuWorld
 
 		if (jsonIO::keyExists(config, "timeline"))
 		{
-			timelineWidth = std::clamp(jsonIO::tryGetValue<int>(config["timeline"], "lane_width", 26), MIN_LANE_WIDTH, MAX_LANE_WIDTH);
-			notesHeight = std::clamp(jsonIO::tryGetValue<int>(config["timeline"], "notes_height", 26), MIN_NOTES_HEIGHT, MAX_NOTES_HEIGHT);
-			matchTimelineSizeToScreen = jsonIO::tryGetValue<bool>(config["timeline"], "match_timeline_size_to_window", false);
-			matchNotesSizeToTimeline = jsonIO::tryGetValue<bool>(config["timeline"], "match_notes_size_to_timeline", true);
+			auto& timeline = config["timeline"];
+			timelineWidth = std::clamp(jsonIO::tryGetValue<int>(timeline, "lane_width", 26), MIN_LANE_WIDTH, MAX_LANE_WIDTH);
+			notesHeight = std::clamp(jsonIO::tryGetValue<int>(timeline, "notes_height", 26), MIN_NOTES_HEIGHT, MAX_NOTES_HEIGHT);
+			matchTimelineSizeToScreen = jsonIO::tryGetValue<bool>(timeline, "match_timeline_size_to_window", false);
+			matchNotesSizeToTimeline = jsonIO::tryGetValue<bool>(timeline, "match_notes_size_to_timeline", true);
 
-			division = jsonIO::tryGetValue<int>(config["timeline"], "division", 8);
-			zoom = jsonIO::tryGetValue<float>(config["timeline"], "zoom", 2.0f);
-			laneOpacity = jsonIO::tryGetValue<float>(config["timeline"], "lane_opacity", 0.0f);
-			backgroundBrightness = jsonIO::tryGetValue<float>(config["timeline"], "background_brightness", 0.5f);
-			drawBackground = jsonIO::tryGetValue<bool>(config["timeline"], "draw_background", true);
-			backgroundImage = jsonIO::tryGetValue<std::string>(config["timeline"], "background_image", "");
+			division = jsonIO::tryGetValue<int>(timeline, "division", 8);
+			zoom = jsonIO::tryGetValue<float>(timeline, "zoom", 2.0f);
+			laneOpacity = jsonIO::tryGetValue<float>(timeline, "lane_opacity", 0.6f);
+			backgroundBrightness = jsonIO::tryGetValue<float>(timeline, "background_brightness", 0.8f);
+			drawBackground = jsonIO::tryGetValue<bool>(timeline, "draw_background", true);
+			backgroundImage = jsonIO::tryGetValue<std::string>(timeline, "background_image", "");
 
-			useSmoothScrolling = jsonIO::tryGetValue<bool>(config["timeline"], "smooth_scrolling_enable", true);
-			smoothScrollingTime = jsonIO::tryGetValue<float>(config["timeline"], "smooth_scrolling_time", 48.0f);
-			scrollSpeedNormal = jsonIO::tryGetValue<float>(config["timeline"], "scroll_speed_normal", 2.0f);
-			scrollSpeedShift = jsonIO::tryGetValue<float>(config["timeline"], "scroll_speed_fast", 5.0f);
+			useSmoothScrolling = jsonIO::tryGetValue<bool>(timeline, "smooth_scrolling_enable", true);
+			smoothScrollingTime = jsonIO::tryGetValue<float>(timeline, "smooth_scrolling_time", 48.0f);
+			scrollSpeedNormal = jsonIO::tryGetValue<float>(timeline, "scroll_speed_normal", 2.0f);
+			scrollSpeedShift = jsonIO::tryGetValue<float>(timeline, "scroll_speed_fast", 5.0f);
 
-			hideStepOutlinesInPlayback = jsonIO::tryGetValue<bool>(config["timeline"], "hide_step_outlines_in_playback", true);
-			drawWaveform = jsonIO::tryGetValue<bool>(config["timeline"], "draw_waveform", true);
-			returnToLastSelectedTickOnPause = jsonIO::tryGetValue<bool>(config["timeline"], "return_to_last_tick_on_pause", false);
-			cursorPositionThreshold = jsonIO::tryGetValue<float>(config["timeline"], "cursor_position_threshold", 0.5f);
-			stopAtEnd = jsonIO::tryGetValue<bool>(config["timeline"], "stop_at_end", true);
+			hideStepOutlinesInPlayback = jsonIO::tryGetValue<bool>(timeline, "hide_step_outlines_in_playback", true);
+			drawWaveform = jsonIO::tryGetValue<bool>(timeline, "draw_waveform", true);
+			returnToLastSelectedTickOnPause = jsonIO::tryGetValue<bool>(timeline, "return_to_last_tick_on_pause", false);
+			cursorPositionThreshold = jsonIO::tryGetValue<float>(timeline, "cursor_position_threshold", 0.5f);
+			stopAtEnd = jsonIO::tryGetValue<bool>(timeline, "stop_at_end", true);
 		}
 
 		if (jsonIO::keyExists(config, "preview"))
 		{
 			auto& previewObj = config["preview"];
+			notesSkin = jsonIO::tryGetValue<int>(previewObj, "notes_skin", 0);
 			pvLockAspectRatio = jsonIO::tryGetValue<bool>(previewObj, "lock_aspect_ratio", true);
 			pvMirrorScore = jsonIO::tryGetValue<bool>(previewObj, "mirror", false);
 			pvFlickAnimation = jsonIO::tryGetValue<bool>(previewObj, "marker_animation", true);
 			pvHoldAnimation = jsonIO::tryGetValue<bool>(previewObj, "hold_animation", true);
 			pvSimultaneousLine = jsonIO::tryGetValue<bool>(previewObj, "simultaneous_line", true);
-			pvNoteEffect = jsonIO::tryGetValue<bool>(previewObj, "note_effect", true);
-			pvLaneEffect = jsonIO::tryGetValue<bool>(previewObj, "lane_effect", true);
-			pvNoteGlow = jsonIO::tryGetValue<bool>(previewObj, "glow_effect", true);
 			pvNoteSpeed = jsonIO::tryGetValue<float>(previewObj, "note_speed", 6.0f);
 			pvHoldAlpha = jsonIO::tryGetValue<float>(previewObj, "hold_alpha", 1.f);
+			pvGuideAlpha = jsonIO::tryGetValue<float>(previewObj, "guide_alpha", 0.8f);
 			pvStageCover = jsonIO::tryGetValue<float>(previewObj, "stage_cover", 0.f);
 			pvStageOpacity = jsonIO::tryGetValue<float>(previewObj, "stage_opacity", 1.f);
+			pvBackgroundBrightness = jsonIO::tryGetValue<float>(previewObj, "background_brightness", 1.f);
+			pvEffectsProfile = jsonIO::tryGetValue<int>(previewObj, "effects_profile", 0);
+			pvDrawToolbar = jsonIO::tryGetValue<bool>(previewObj, "draw_toolbar", true);
 		}
 
 		if (jsonIO::keyExists(config, "theme"))
@@ -165,6 +169,7 @@ namespace MikuMikuWorld
 		config["window"]["maximized"] = maximized;
 		config["window"]["vsync"] = vsync;
 		config["window"]["show_fps"] = showFPS;
+		config["window"]["fullscreen"] = fullScreen;
 
 		config["timeline"] = {
 			{"lane_width", timelineWidth},
@@ -189,18 +194,20 @@ namespace MikuMikuWorld
 		};
 
 		config["preview"] = {
+			{"notes_skin", notesSkin},
 			{"lock_aspect_ratio", pvLockAspectRatio},
 			{"mirror", pvMirrorScore},
 			{"marker_animation", pvFlickAnimation},
 			{"hold_animation", pvHoldAnimation},
 			{"simultaneous_line", pvSimultaneousLine},
-			{"note_effect", pvNoteEffect},
-			{"lane_effect", pvLaneEffect},
-			{"glow_effect", pvNoteGlow},
 			{"note_speed", pvNoteSpeed},
 			{"hold_alpha", pvHoldAlpha},
+			{"guide_alpha", pvGuideAlpha},
 			{"stage_cover", pvStageCover},
-			{"stage_opacity", pvStageOpacity}
+			{"stage_opacity", pvStageOpacity},
+			{"background_brightness", pvBackgroundBrightness},
+			{"effects_profile", pvEffectsProfile},
+			{"draw_toolbar", pvDrawToolbar}
 		};
 
 		config["theme"] = {
@@ -259,7 +266,8 @@ namespace MikuMikuWorld
 	void ApplicationConfiguration::restoreDefault()
 	{
 		windowPos = Vector2(150, 100);
-		windowSize = Vector2(1000, 800);
+		windowSize = Vector2(1100, 800);
+		fullScreen = false;
 		maximized = false;
 		vsync = true;
 		accentColor = 1;
@@ -271,8 +279,8 @@ namespace MikuMikuWorld
 		matchNotesSizeToTimeline = true;
 		division = 8;
 		zoom = 2.0f;
-		laneOpacity = 0.0f;
-		backgroundBrightness = 0.5f;
+		laneOpacity = 0.6f;
+		backgroundBrightness = 0.8f;
 		drawBackground = true;
 		backgroundImage = "";
 		useSmoothScrolling = true;
@@ -291,13 +299,15 @@ namespace MikuMikuWorld
 		pvFlickAnimation = true;
 		pvSimultaneousLine = true;
 		pvHoldAnimation = true;
-		pvLaneEffect = true;
-		pvNoteEffect = true;
-		pvNoteGlow = true;
 		pvNoteSpeed = 6.0f;
 		pvHoldAlpha = 1.f;
+		pvGuideAlpha = 0.8f;
 		pvStageCover = 0.f;
 		pvStageOpacity = 1.f;
+		pvBackgroundBrightness = 1.f;
+		pvEffectsProfile = 0;
+		notesSkin = 0;
+		pvDrawToolbar = true;
 
 		autoSaveEnabled = true;
 		autoSaveInterval = 5;

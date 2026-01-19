@@ -3,6 +3,7 @@
 #include "ScoreEditorTimeline.h"
 #include "Rendering/Framebuffer.h"
 #include "Rendering/Renderer.h"
+#include "Rendering/Camera.h"
 
 namespace MikuMikuWorld
 {
@@ -39,17 +40,18 @@ namespace MikuMikuWorld
 		Framebuffer previewBuffer;
 		ScorePreviewBackground background;
 		float scaledAspectRatio;
-		std::unique_ptr<Texture> notesTex;
+		Camera noteEffectsCamera;
+
+		mutable bool fullWindow{};
+		bool lastFrameFullWindow{};
+
 		const Texture& getNoteTexture();
-		std::pair<float, float> getNoteBound(const Note& note) const;
-		std::pair<float, float> getHoldStepBound(const Note& note, const Score& score, int curTick) const;
-		std::pair<float, float> getHoldSegmentBound(const Note& note, const Score& score, int curTick) const;
-		
+
 		void drawNoteBase(Renderer* renderer, const Note& note, float left, float right, float y, float zScalar = 1);
 		void drawTraceDiamond(Renderer* renderer, const Note& note, float left, float right, float y);
-		void drawFlickArrow(Renderer* renderer, const Note& note, float y, float cur_time);
-		void drawParticle(Renderer* renderer, const std::array<DirectX::XMFLOAT4, 4>& layout, const Engine::DrawingParticle& particle,
-			float progress, const Texture& texture, const Sprite& sprite, int zIndex);
+		void drawFlickArrow(Renderer* renderer, const Note& note, float y, double cur_time);
+
+		void drawStageCoverMask(Renderer* renderer);
 		
 		void updateToolbar(ScoreEditorTimeline& timeline, ScoreContext& context) const;
 		float getScrollbarWidth() const;
@@ -58,15 +60,22 @@ namespace MikuMikuWorld
 		ScorePreviewWindow(); 
 		~ScorePreviewWindow();
 		void update(ScoreContext& context, Renderer* renderer);
-		void updateUI(ScoreEditorTimeline& timeline, ScoreContext& context) const;
+		void updateUI(ScoreEditorTimeline& timeline, ScoreContext& context);
 
 		void drawNotes(const ScoreContext& context, Renderer* renderer);
 		void drawLines(const ScoreContext& context, Renderer* renderer);
 		void drawHoldTicks(const ScoreContext& context, Renderer* renderer);
 		void drawHoldCurves(const ScoreContext& context, Renderer* renderer);
-		void drawUnblendParticles(const ScoreContext& context, Renderer* renderer);
-		void drawParticles(const ScoreContext& context, Renderer* renderer);
- 		void drawStage(Renderer* renderer);
+ 		
+		void drawStage(Renderer* renderer);
 		void drawStageCover(Renderer* renderer);
+		void drawStageCoverDecoration(Renderer* renderer);
+
+		void setFullWindow(bool fullScreen);
+		
+		inline bool isFullWindow() const { return fullWindow; };
+		bool wasLastFrameFullWindow() const { return lastFrameFullWindow; }
+
+		void loadNoteEffects(Effect::EffectView& effectView);
 	};
 }

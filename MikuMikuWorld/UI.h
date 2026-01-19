@@ -1,7 +1,8 @@
 #pragma once
+
+#define IMGUI_DEFINE_MATH_OPERATORS
+
 #include "ImGui/imgui.h"
-#include "ImGui/imgui_stdlib.h"
-#include "ImGui/imgui_internal.h"
 #include "IconsFontAwesome5.h"
 #include "Localization.h"
 #include "NoteTypes.h"
@@ -80,6 +81,7 @@ namespace MikuMikuWorld
 		static void addIntProperty(const char* label, int& val, int lowerBound = 0, int higherBound = 0);
 		static void addIntProperty(const char* label, int& val, const char* format, int lowerBound = 0, int higherBound = 0);
 		static void addFloatProperty(const char* label, float& val, const char* format);
+		static void addNumericStringProperty(const char* label, std::string& val, bool button = true);
 		static void addStringProperty(const char* label, std::string& val);
 		static void addSliderProperty(const char* label, int& val, int min, int max, const char* format);
 		static void addSliderProperty(const char* label, float& val, float min, float max, const char* format);
@@ -100,6 +102,18 @@ namespace MikuMikuWorld
 		static void toolbarSeparator();
 
 		static void setWindowTitle(std::string title);
+
+		/// <summary>
+		/// Querys whether the system is set to dark mode
+		/// </summary>
+		/// <returns>true if dark mode is enabled; Otherwise false</returns>
+		static bool isSystemDarkMode();
+
+		/// <summary>
+		/// Sets whether immersive dark color (windows dark theme) is enabled or not
+		/// </summary>
+		/// <param name="enabled">Whether dark mode should be enabled</param>
+		static void setDarkMode(bool enabled);
 		static void updateBtnSizesDpiScaling(float scale);
 
 		template <typename T>
@@ -133,19 +147,51 @@ namespace MikuMikuWorld
 			std::string id("##");
 			id.append(label);
 
-			std::string curr = getString(items[(int)value]);
-			if (!curr.size())
+			const char* curr = getString(items[(int)value]);
+			if (strlen(curr) <= 0)
 				curr = items[(int)value];
-			if (ImGui::BeginCombo(id.c_str(), curr.c_str()))
+
+			if (ImGui::BeginCombo(id.c_str(), curr))
 			{
 				for (int i = 0; i < count; ++i)
 				{
 					const bool selected = (int)value == i;
-					std::string str = getString(items[i]);
-					if (!str.size())
+					const char* str = getString(items[i]);
+					if (strlen(str) <= 0)
 						str = items[i];
 
-					if (ImGui::Selectable(str.c_str(), selected))
+					if (ImGui::Selectable(str, selected))
+						value = (T)i;
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::NextColumn();
+		}
+
+		template <typename T>
+		static void addSelectProperty(const char* label, T& value, const std::vector<std::string>& items, int count)
+		{
+			propertyLabel(label);
+
+			std::string id("##");
+			id.append(label);
+
+			std::string_view curr = getString(items[(int)value]);
+			if (!curr.size())
+				curr = items[(int)value];
+
+			if (ImGui::BeginCombo(id.c_str(), curr.data()))
+			{
+				for (int i = 0; i < count; ++i)
+				{
+					const bool selected = (int)value == i;
+					std::string_view str = getString(items[i]);
+					if (str.empty())
+						str = items[i].data();
+
+					if (ImGui::Selectable(str.data(), selected))
 						value = (T)i;
 				}
 
@@ -164,19 +210,20 @@ namespace MikuMikuWorld
 			std::string id("##");
 			id.append(label);
 
-			std::string curr = getString(items[(int)value]);
+			std::string_view curr = getString(items[(int)value]);
 			if (!curr.size())
 				curr = items[(int)value];
-			if (ImGui::BeginCombo(id.c_str(), curr.c_str()))
+
+			if (ImGui::BeginCombo(id.c_str(), curr.data()))
 			{
 				for (int i = (int)FlickType::Default; i < count; ++i)
 				{
 					const bool selected = (int)value == i;
-					std::string str = getString(items[i]);
-					if (!str.size())
+					std::string_view str = getString(items[i]);
+					if (str.empty())
 						str = items[i];
 
-					if (ImGui::Selectable(str.c_str(), selected))
+					if (ImGui::Selectable(str.data(), selected))
 						value = (FlickType)i;
 				}
 

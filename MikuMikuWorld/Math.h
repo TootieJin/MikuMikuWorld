@@ -1,4 +1,6 @@
 #pragma once
+
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "ImGui/imgui.h"
 #include <functional>
 #include "NoteTypes.h"
@@ -37,6 +39,67 @@ namespace MikuMikuWorld
 		}
 	};
 
+	struct Vector3
+	{
+		float x;
+		float y;
+		float z;
+
+		Vector3(float _x, float _y, float _z)
+			: x{ _x }, y{ _y }, z{ _z }
+		{
+
+		}
+
+		Vector3() : x{ 0 }, y{ 0 }, z{ 0 }
+		{
+
+		}
+
+		Vector3 operator+(const Vector3& v) const
+		{
+			return Vector3(x + v.x, y + v.y, z + v.z);
+		}
+
+		Vector3 operator-(const Vector3& v) const
+		{
+			return Vector3(x - v.x, y - v.y, z - v.z);
+		}
+
+		Vector3 operator*(const Vector3& v) const
+		{
+			return Vector3(x * v.x, y * v.y, z * v.z);
+		}
+
+		Vector3& operator*=(const Vector3& v)
+		{
+			x *= v.x;
+			y *= v.y;
+			z *= v.z;
+			return *this;
+		}
+
+		Vector3& operator*=(float factor)
+		{
+			x *= factor;
+			y *= factor;
+			z *= factor;
+			return *this;
+		}
+
+		Vector3& operator+=(const Vector3& v)
+		{
+			x += v.x;
+			y += v.y;
+			z += v.z;
+			return *this;
+		}
+
+		inline Vector3 operator * (const float& mult) const {
+			return Vector3(x * mult, y * mult, z * mult);
+		}
+	};
+
 	struct Color
 	{
 	public:
@@ -55,6 +118,7 @@ namespace MikuMikuWorld
 
 		inline bool operator==(const Color& c) const { return r == c.r && g == c.g && b == c.b && a == c.a; }
 		inline bool operator!=(const Color& c) const { return !(*this == c); }
+		inline Color operator*(const Color& c) const { return Color(r * c.r, g * c.g, b * c.b, a * c.a); }
 
 		static inline int rgbaToInt(int r, int g, int b, int a) { return r << 24 | g << 16 | b << 8 | a; }
 		static inline int abgrToInt(int a, int b, int g, int r) { return a << 24 | b << 16 | g << 8 | r; }
@@ -63,6 +127,12 @@ namespace MikuMikuWorld
 		static inline Color fromImVec4(const ImVec4& col) { return Color{ col.x, col.y, col.z, col.w }; }
 
 		inline Color scaleAlpha(float scalar) { return Color{ r, g, b, a * scalar}; }
+	};
+
+	struct Range
+	{
+		double min;
+		double max;
 	};
 
 	constexpr uint32_t roundUpToPowerOfTwo(uint32_t v)
@@ -77,22 +147,22 @@ namespace MikuMikuWorld
 		return v;
 	}
 
+	template <typename FloatType = double>
+	static auto roundOff(double value, int precision = 7)
+	{
+		FloatType dvalue = value;
+		double digits = std::pow(10, precision);
+		return std::round(dvalue * digits) / digits;
+	}
+
 	float lerp(float start, float end, float ratio);
 	float unlerp(float start, float end, float value);
+	double lerpD(double start, double end, double ratio);
+	double unlerpD(double start, double end, double value);
 	float easeIn(float start, float end, float ratio);
 	float easeOut(float start, float end, float ratio);
 	float midpoint(float x1, float x2);
 	bool isWithinRange(float x, float left, float right);
-	template <typename T, typename cmp_t = std::less<T>>
-	inline const T& clamp(const T& v, const T& a, const T& b)
-	{
-		cmp_t cmp;
-		if (cmp(v, a))
-			return a;
-		if (cmp(b, v))
-			return b;
-		return v;
-	}
 
 	std::function<float(float, float, float)> getEaseFunction(EaseType ease);
 
@@ -100,75 +170,8 @@ namespace MikuMikuWorld
 
 	static constexpr double NUM_PI = 3.14159265358979323846;
 	static constexpr double NUM_PI_2 = 3.14159265358979323846 / 2;
+	static constexpr double DEGREE_TO_RAD = NUM_PI / 180;
 
-	namespace Engine
-	{
-		struct Range
-		{
-			float min;
-			float max;
-		};
-
-		enum class Easing : uint8_t
-		{
-			Linear,
-			Sine,
-			Quad,
-			Cubic,
-			Quart,
-			Quint,
-			Expo,
-			Circ,
-			Back,
-			Elastic,
-			EasingCount,
-			TypeMask = 0b1111,
-			In    = 1 << 4,
-			Out   = 1 << 5,
-			InOut = In | Out,
-			OutIn = 1 << 6
-		};
-
-		using EasingFunc = float(*)(float x);
-
-		float easeLinear(float x);
-		float easeInSine(float x);
-		float easeOutSine(float x);
-		float easeInOutSine(float x);
-		float easeOutInSine(float x);
-		float easeInQuad(float x);
-		float easeOutQuad(float x);
-		float easeInOutQuad(float x);
-		float easeOutInQuad(float x);
-		float easeInCubic(float x);
-		float easeOutCubic(float x);
-		float easeInOutCubic(float x);
-		float easeOutInCubic(float x);
-		float easeInQuart(float x);
-		float easeOutQuart(float x);
-		float easeInOutQuart(float x);
-		float easeOutInQuart(float x);
-		float easeInQuint(float x);
-		float easeOutQuint(float x);
-		float easeInOutQuint(float x);
-		float easeOutInQuint(float x);
-		float easeInExpo(float x);
-		float easeOutExpo(float x);
-		float easeInOutExpo(float x);
-		float easeOutInExpo(float x);
-		float easeInCirc(float x);
-		float easeOutCirc(float x);
-		float easeInOutCirc(float x);
-		float easeOutInCirc(float x);
-		float easeInBack(float x);
-		float easeOutBack(float x);
-		float easeInOutBack(float x);
-		float easeOutInBack(float x);
-		float easeInElastic(float x);
-		float easeOutElastic(float x);
-		float easeInOutElastic(float x);
-		float easeOutInElastic(float x);
-
-		EasingFunc getEaseFunc(Easing easing);
-	}
+	float easeInCubic(float x);
+	float easeOutCubic(float x);
 }

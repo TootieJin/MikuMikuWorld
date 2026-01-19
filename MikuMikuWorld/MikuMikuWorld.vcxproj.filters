@@ -114,9 +114,6 @@
     <ClCompile Include="SusExporter.cpp">
       <Filter>Score\SUS</Filter>
     </ClCompile>
-    <ClCompile Include="ScoreConverter.cpp">
-      <Filter>Score</Filter>
-    </ClCompile>
     <ClCompile Include="ScoreEditorWindows.cpp">
       <Filter>ScoreEditor</Filter>
     </ClCompile>
@@ -159,8 +156,6 @@
     <ClCompile Include="ScoreSerializer.cpp">
       <Filter>Score\Serialization</Filter>
     </ClCompile>
-    <ClCompile Include="..\Depends\zlib\src\gzlib.c" />
-    <ClCompile Include="..\Depends\zlib\src\deflate.c" />
     <ClCompile Include="PreviewEngine.cpp">
       <Filter>ScorePreview</Filter>
     </ClCompile>
@@ -169,6 +164,25 @@
     </ClCompile>
     <ClCompile Include="PreviewData.cpp">
       <Filter>ScorePreview</Filter>
+    </ClCompile>
+    <ClCompile Include="ScoreSerializeWindow.cpp">
+      <Filter>Score\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="Sonolus.cpp" />
+    <ClCompile Include="NoteSkin.cpp">
+      <Filter>Graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="MinMax.cpp">
+      <Filter>ScorePreview\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="Particle.cpp">
+      <Filter>ScorePreview\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="DebugEffectView.cpp">
+      <Filter>ScorePreview\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="EffectView.cpp">
+      <Filter>ScorePreview\Effects</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -316,9 +330,6 @@
     <ClInclude Include="SusExporter.h">
       <Filter>Score\SUS</Filter>
     </ClInclude>
-    <ClInclude Include="ScoreConverter.h">
-      <Filter>Score</Filter>
-    </ClInclude>
     <ClInclude Include="ScoreEditorWindows.h">
       <Filter>ScoreEditor</Filter>
     </ClInclude>
@@ -381,6 +392,25 @@
     </ClInclude>
     <ClInclude Include="PreviewData.h">
       <Filter>ScorePreview</Filter>
+    </ClInclude>
+    <ClInclude Include="ScoreSerializeWindow.h">
+      <Filter>Score\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="Sonolus.h" />
+    <ClInclude Include="NoteSkin.h">
+      <Filter>Graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="Particle.h">
+      <Filter>ScorePreview\Effects</Filter>
+    </ClInclude>
+    <ClInclude Include="MinMax.h">
+      <Filter>ScorePreview\Effects</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugEffectView.h">
+      <Filter>ScorePreview\Effects</Filter>
+    </ClInclude>
+    <ClInclude Include="EffectView.h">
+      <Filter>ScorePreview\Effects</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -449,6 +479,9 @@
     </Filter>
     <Filter Include="ScorePreview">
       <UniqueIdentifier>{b2e37fa4-b250-4e59-89d0-131b15a9423e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ScorePreview\Effects">
+      <UniqueIdentifier>{0d3f066b-bb83-429d-9f38-54da9b01145b}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
