@@ -9,15 +9,16 @@ namespace MikuMikuWorld::Effect
 {
 	DebugEffectView::DebugEffectView()
 	{
+		camera = std::make_unique<Camera>();
 		resetCamera();
 	}
 
 	void DebugEffectView::resetCamera()
 	{
-		camera.setFov(50.f);
-		camera.setRotation(-90.f, 27.1f);
-		camera.setPosition({ 0, 5.32f, -5.86f, 0.f });
-		camera.positionCamNormal();
+		camera->setFov(50.f);
+		camera->setRotation(-90.f, 27.1f);
+		camera->setPosition({ 0, 5.32f, -5.86f, 0.f });
+		camera->positionCamNormal();
 	}
 
 	static EmitterInstance createFromParticle(int particleId)
@@ -119,9 +120,7 @@ namespace MikuMikuWorld::Effect
 
 		ImGui::SameLine();
 		if (ImGui::Button("TRS"))
-		{
 			ImGui::OpenPopup("DBG_EFF_TRS");
-		}
 
 		if (ImGui::BeginPopup("DBG_EFF_TRS"))
 		{
@@ -167,11 +166,6 @@ namespace MikuMikuWorld::Effect
 		ImGui::SameLine();
 		ImGui::Text("Speed: %.2f", timeFactor);
 
-		if (!playing)
-		{
-			time += ImGui::GetIO().MouseWheel * 0.1f * ImGui::GetIO().KeyCtrl;
-		}
-
 		ImVec2 position = ImGui::GetCursorScreenPos();
 		ImVec2 size = ImGui::GetContentRegionAvail();
 		ImRect boundaries{ position, position + size };
@@ -182,43 +176,44 @@ namespace MikuMikuWorld::Effect
 		previewBuffer->bind();
 		previewBuffer->clear(0.1, 0.1, 0.1, 1);
 
-		if (ImGui::IsMouseHoveringRect(boundaries.Min, boundaries.Max))
+		bool isWindowActive = !ImGui::IsWindowDocked() || ImGui::GetCurrentWindow()->TabId == ImGui::GetWindowDockNode()->SelectedTabId;
+		if (isWindowActive && ImGui::IsMouseHoveringRect(boundaries.Min, boundaries.Max))
 		{
 			ImGuiIO& io = ImGui::GetIO();
 			bool updateCamera = false;
-			if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+			if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyCtrl)
 			{
-				camera.rotate(io.MouseDelta[0], io.MouseDelta[1]);
+				camera->rotate(io.MouseDelta[0], io.MouseDelta[1]);
 				updateCamera = true;
 			}
 
-			if (abs(io.MouseWheel) > 0 && !io.KeyCtrl)
+			if (abs(io.MouseWheel) > 0 && io.KeyCtrl)
 			{
-				camera.zoom(io.MouseWheel);
+				camera->zoom(io.MouseWheel);
 				updateCamera = true;
 			}
 
 			if (updateCamera)
-				camera.positionCamNormal();
+				camera->positionCamNormal();
+
+			time += ImGui::GetIO().MouseWheel * 0.1f * io.KeyAlt * !playing;
 		}
 
 		if (playing)
-		{
 			time += ImGui::GetIO().DeltaTime * timeFactor;
-		}
 
 		static Transform baseTransform;
 
 		EmitterInstance& emitter = effects[static_cast<int>(selectedEffect)];
-		emitter.update(time, debugTransform, camera);
+		emitter.update(time, debugTransform, *camera);
 		renderer->beginBatch();
 
 		Shader* shader = ResourceManager::shaders[ResourceManager::getShader("particles")];
 
 		float aspectRatio = size.x / size.y;
 
-		const auto pView = camera.getViewMatrix();
-		auto pProjection = camera.getProjectionMatrix(aspectRatio, 0.3, 1000);
+		const auto pView = camera->getViewMatrix();
+		auto pProjection = camera->getProjectionMatrix(aspectRatio, 0.3, 1000);
 		float projectionScale = std::min(aspectRatio / (16.f / 9.f), 1.f);
 		pProjection = DirectX::XMMatrixScaling(projectionScale, projectionScale, 1.f) * pProjection;
 
