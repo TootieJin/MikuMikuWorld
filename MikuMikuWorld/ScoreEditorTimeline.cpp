@@ -24,14 +24,31 @@ namespace MikuMikuWorld
 		const float frameHeight = ImGui::GetFrameHeightWithSpacing();
 		ImGui::PopStyleVar();
 		ImU32 col = eventData.color;
-		if (eventData.highlight)
+
+		if (!eventData.enabled)
+			col = (col & 0x00FFFFFF) | 0xAA << IM_COL32_A_SHIFT;
+		else if (eventData.highlight)
 			col = ImGui::ColorConvertFloat4ToU32(generateHighlightColor(ImGui::ColorConvertU32ToFloat4(col)));
+
 		ImRect bound = { eventData.pos, eventData.pos + eventData.size };
 		ImGui::RenderFrame(bound.Min, bound.Max, col, true, 2.0f);
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.15f, 0.15f, 1.0));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
 		ImGui::RenderTextClipped(bound.Min + framePadding, bound.Max - framePadding, eventData.txt.c_str(), NULL, &eventData.txtSize, ImGui::GetStyle().ButtonTextAlign, &bound);
 		ImGui::PopStyleColor();
 		drawList->AddLine({ eventData.timelineX, eventData.pos.y + frameHeight }, { eventData.pos.x + (eventData.pos.x < eventData.timelineX ? 0 : eventData.size.x), eventData.pos.y + frameHeight }, col, primaryLineThickness);
+	}
+
+	void ScoreEditorTimeline::drawFeverLine(const Fever& fever)
+	{
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		if (!drawList)
+			return;
+
+		const float x = getTimelineStartX();
+		const float y1 = position.y - tickToPosition(fever.startTick) + visualOffset;
+		const float y2 = position.y - tickToPosition(fever.endTick) + visualOffset;
+
+		drawList->AddLine({ x, y1 }, { x, y2 }, feverColor, primaryLineThickness);
 	}
 
 	bool ScoreEditorTimeline::eventControl(int tick, ImU32 color, const char* txt, bool fromStart, bool enabled)
@@ -46,7 +63,7 @@ namespace MikuMikuWorld
 		float posX, posY = floorf(position.y - tickPos + visualOffset - frameHeight);
 		float minCursor, maxCursor, timelineX;
 
-		if (posY + itemSize.y < boundaries.Min.x || posY > boundaries.Max.y)
+		if (posY + itemSize.y < boundaries.Min.y || posY > boundaries.Max.y)
 			return false;
 
 		int tracks = std::floor(tickPos / 1.5f / frameHeight);
@@ -84,7 +101,8 @@ namespace MikuMikuWorld
 		ImGui::PopStyleVar();
 		ImGui::PopStyleColor(3);
 
-		drawEvents.push({ activated || ImGui::IsItemHovered() || ImGui::IsItemActive(), timelineX, {posX, posY}, itemSize + ImVec2{1, 0}, txtSize, color, txt});
+		bool highlight = activated || ImGui::IsItemHovered() || ImGui::IsItemActive();
+		drawEvents.push({ timelineX, {posX, posY}, itemSize + ImVec2{1, 0}, txtSize, color, txt, highlight, enabled });
 		eventControlCursor[tracks] = std::make_pair(minCursor, maxCursor);
 
 		return activated;
@@ -442,8 +460,14 @@ namespace MikuMikuWorld
 					}
 
 					// Clicked and dragging inside the timeline
-					if (clickedOnTimeline && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered() && ImGui::IsMouseDragPastThreshold(0, 10.0f) && !playing)
+					if (clickedOnTimeline && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered() && ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left, 10.0f) && !playing)
 						dragging = true;
+				}
+
+				if (ImGui::IsAnyPressed(config.input.cancelPaste) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+				{
+					context.cancelPaste();
+					insertingHold = insertingFever = false;
 				}
 			}
 
@@ -638,6 +662,7 @@ namespace MikuMikuWorld
 				drawList->AddTriangleFilled({ x, y2 }, { x + 10, y2 }, { x + 10, y2 + 10 }, 0xFFCCCCCC);
 			}
 
+			drawFeverLine(context.score.fever);
 			if (feverControl(context.score.fever))
 			{
 				eventEdit.editIndex = -1;
@@ -667,7 +692,7 @@ namespace MikuMikuWorld
 
 			// Update cursor tick after determining whether a note is hovered
 			// The cursor tick should not change if a note is hovered
-			if (ImGui::IsMouseClicked(0) && !isHoveringNote && mouseInTimeline && !playing && !pasting &&
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !isHoveringNote && mouseInTimeline && !playing && !pasting &&
 				!UI::isAnyPopupOpen() && currentMode == TimelineMode::Select && ImGui::IsWindowFocused())
 			{
 				context.currentTick = hoverTick;
@@ -897,7 +922,14 @@ namespace MikuMikuWorld
 
 		std::sort(updateNoteIDs.begin(), updateNoteIDs.end(), [&context](int a, int b)
 		{
-			return context.score.notes.at(a).tick > context.score.notes.at(b).tick;
+			const Note& n1 = context.score.notes.at(a);
+			const Note& n2 = context.score.notes.at(b);
+			if (n1.tick == n2.tick)
+			{
+				return n1.lane == n2.lane ? n1.ID < n2.ID : n1.lane < n2.lane;
+			}
+
+			return n1.tick < n2.tick;
 		});
 
 		renderer->beginBatch();
@@ -950,16 +982,16 @@ namespace MikuMikuWorld
 		const bool pasting = context.pasteData.pasting;
 		if (pasting && mouseInTimeline && !playing)
 		{
-			context.pasteData.offsetLane = std::clamp(hoverLane - context.pasteData.midLane,
+			context.pasteData.offsetLane = std::clamp(
+				hoverLane - context.pasteData.midLane,
 				context.pasteData.minLaneOffset,
-				context.pasteData.maxLaneOffset);
+				context.pasteData.maxLaneOffset
+			);
 
 			context.pasteData.offsetTicks = hoverTick + context.pasteData.minTick;
 			previewPaste(context, renderer);
-			if (ImGui::IsMouseClicked(0))
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 				context.confirmPaste();
-			else if (ImGui::IsMouseClicked(1))
-				context.cancelPaste();
 		}
 
 		if (mouseInTimeline && !isHoldingNote && (currentMode != TimelineMode::Select || insertingFever) &&
@@ -967,10 +999,10 @@ namespace MikuMikuWorld
 		{
 			renderer->beginBatch();
 			previewInput(edit, renderer);
-			if (ImGui::IsMouseClicked(0) && hoverTick >= 0 && !isHoveringNote)
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverTick >= 0 && !isHoveringNote)
 				executeInput(context, edit);
 
-			if (insertingHold && !ImGui::IsMouseDown(0))
+			if (insertingHold && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
 			{
 				insertHold(context, edit);
 				insertingHold = false;
@@ -1107,6 +1139,9 @@ namespace MikuMikuWorld
 
 	void ScoreEditorTimeline::insertSkill(ScoreContext& context, int tick)
 	{
+		if (playing)
+			return;
+
 		for (const auto& skill : context.score.skills)
 		{
 			if (skill.tick == tick)
@@ -1120,6 +1155,9 @@ namespace MikuMikuWorld
 
 	void ScoreEditorTimeline::beginInsertFever(ScoreContext& context, int tick)
 	{
+		if (playing)
+			return;
+
 		// Cancel paste to avoid inserting a fever and pasting simultaneously
 		context.pasteData.pasting = false;
 
@@ -1154,10 +1192,15 @@ namespace MikuMikuWorld
 
 	void ScoreEditorTimeline::previewInput(EditArgs& edit, Renderer* renderer)
 	{
+		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.6f);
 		if (insertingFever)
 		{
 			inputFever.endTick = hoverTick;
-			feverControl(inputFever);
+			feverControl(inputFever.startTick, true, false);
+			feverControl(inputFever.endTick, true, false);
+			drawFeverLine(inputFever);
+
+			ImGui::PopStyleVar();
 			return;
 		}
 
@@ -1204,12 +1247,14 @@ namespace MikuMikuWorld
 			break;
 
 		case TimelineMode::InsertHiSpeed:
-			hiSpeedControl(hoverTick, edit.hiSpeed);
+			hiSpeedControl(hoverTick, edit.hiSpeed, false);
 			break;
 		default:
 			drawNote(inputNotes.tap, renderer, hoverTint);
 			break;
 		}
+
+		ImGui::PopStyleVar();
 	}
 
 	void ScoreEditorTimeline::executeInput(ScoreContext& context, EditArgs& edit)
@@ -1403,7 +1448,7 @@ namespace MikuMikuWorld
 			{
 				minNoteYDistance = noteYDistance;
 				hoveringNote = note.ID;
-				if (ImGui::IsMouseClicked(0) && !UI::isAnyPopupOpen())
+				if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !UI::isAnyPopupOpen())
 				{
 					if (!io.KeyCtrl && !io.KeyAlt && !context.isNoteSelected(note))
 						context.selectedNotes.clear();
@@ -1611,7 +1656,7 @@ namespace MikuMikuWorld
 			return;
 
 		const Texture& pathTex = ResourceManager::textures[texIndex];
-		const int sprIndex = n1.critical ? 3 : 1;
+		const int sprIndex = n1.critical ? 3 : 1; // 0, 1 -> normal, 2, 3 -> critical
 		if (!isArrayIndexInBounds(sprIndex, pathTex.sprites))
 			return;
 
@@ -1633,6 +1678,8 @@ namespace MikuMikuWorld
 
 		auto easeFunc = getEaseFunction(ease);
 		float steps = ease == EaseType::Linear ? 1 : std::max(5.0f, std::ceilf(abs((endY - startY)) / 10));
+
+		Color appliedTint = isGuide ? tint.scaleAlpha(0.67f) : tint;
 
 		for (int y = 0; y < steps; ++y)
 		{
@@ -1661,19 +1708,19 @@ namespace MikuMikuWorld
 			Vector2 p2{ xl1 + holdSliceSize, y1 };
 			Vector2 p3{ xl2, y2 };
 			Vector2 p4{ xl2 + holdSliceSize, y2 };
-			renderer->drawQuad(p1, p2, p3, p4, pathTex, left, left + holdSliceWidth, spr.getY1(), spr.getY2(), tint, (int)ZIndex::HoldLine);
+			renderer->drawQuad(p1, p2, p3, p4, pathTex, left, left + holdSliceWidth, spr.getY1(), spr.getY2(), appliedTint, (int)ZIndex::HoldLine);
 
 			p1.x = xl1 + holdSliceSize;
 			p2.x = xr1 - holdSliceSize;
 			p3.x = xl2 + holdSliceSize;
 			p4.x = xr2 - holdSliceSize;
-			renderer->drawQuad(p1, p2, p3, p4, pathTex, left + holdSliceWidth, right - holdSliceWidth, spr.getY1(), spr.getY2(), tint, (int)ZIndex::HoldLine);
+			renderer->drawQuad(p1, p2, p3, p4, pathTex, left + holdSliceWidth, right - holdSliceWidth, spr.getY1(), spr.getY2(), appliedTint, (int)ZIndex::HoldLine);
 
 			p1.x = xr1 - holdSliceSize;
 			p2.x = xr1;
 			p3.x = xr2 - holdSliceSize;
 			p4.x = xr2;
-			renderer->drawQuad(p1, p2, p3, p4, pathTex, right - holdSliceWidth, right, spr.getY1(), spr.getY2(), tint, (int)ZIndex::HoldLine);
+			renderer->drawQuad(p1, p2, p3, p4, pathTex, right - holdSliceWidth, right, spr.getY1(), spr.getY2(), appliedTint, (int)ZIndex::HoldLine);
 		}
 	}
 
@@ -1970,15 +2017,15 @@ namespace MikuMikuWorld
 
 	bool ScoreEditorTimeline::hiSpeedControl(const HiSpeedChange& hiSpeed)
 	{
-		return hiSpeedControl(hiSpeed.tick, hiSpeed.speed);
+		return hiSpeedControl(hiSpeed.tick, hiSpeed.speed, !playing);
 	}
 
-	bool ScoreEditorTimeline::hiSpeedControl(int tick, float speed)
+	bool ScoreEditorTimeline::hiSpeedControl(int tick, float speed, bool enabled)
 	{
 		std::string txt = IO::formatString("%sx", IO::formatFixedFloatTrimmed(speed));
 		float dpiScale = ImGui::GetMainViewport()->DpiScale;
 		Vector2 pos{ getTimelineEndX() + (115 * dpiScale), position.y - tickToPosition(tick) + visualOffset};
-		return eventControl(tick, speedColor, txt.c_str(), false, !playing);
+		return eventControl(tick, speedColor, txt.c_str(), false, enabled);
 	}
 
 	void ScoreEditorTimeline::eventEditor(ScoreContext& context)
@@ -2455,7 +2502,7 @@ namespace MikuMikuWorld
 		}
 	}
 
-	void ScoreEditorTimeline::drawWaveform(ScoreContext& context)
+	void ScoreEditorTimeline::drawWaveform(const ScoreContext& context)
 	{
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		if (!drawList)
