@@ -182,8 +182,8 @@ namespace MikuMikuWorld
 		if (!backgroundFile.empty())
 		{
 			Utils::fillRect(scrWidth, scrHeight, bgScrWidth / bgScrHeight, bgScrWidth, bgScrHeight);
-			targetWidth = config.pvLockAspectRatio ? Engine::STAGE_TARGET_WIDTH : scrWidth;
-			targetHeight = config.pvLockAspectRatio ? Engine::STAGE_TARGET_HEIGHT : scrHeight;
+			targetWidth = Engine::STAGE_TARGET_WIDTH;
+			targetHeight = Engine::STAGE_TARGET_HEIGHT;
 		}
 		else
 		{
@@ -316,10 +316,10 @@ namespace MikuMikuWorld
 
 		// Create a projection to the engine coordinate system
 		float width  = size.x, height = size.y;
-		float scaledWidth = (config.pvLockAspectRatio ? Engine::STAGE_TARGET_WIDTH : size.x) * Engine::STAGE_WIDTH_RATIO;
-		float scaledHeight = (config.pvLockAspectRatio ? Engine::STAGE_TARGET_HEIGHT : size.y) * Engine::STAGE_HEIGHT_RATIO;
-		float scrTop  = (config.pvLockAspectRatio ? Engine::STAGE_TARGET_HEIGHT : size.y) * Engine::STAGE_TOP_RATIO;
-		if (config.pvLockAspectRatio) Utils::fillRect(Engine::STAGE_TARGET_WIDTH, Engine::STAGE_TARGET_HEIGHT, size.x / size.y, width, height);
+		float scaledWidth = Engine::STAGE_TARGET_WIDTH * Engine::STAGE_WIDTH_RATIO;
+		float scaledHeight = Engine::STAGE_TARGET_HEIGHT * Engine::STAGE_HEIGHT_RATIO;
+		float scrTop  = Engine::STAGE_TARGET_HEIGHT * Engine::STAGE_TOP_RATIO;
+		Utils::fillRect(Engine::STAGE_TARGET_WIDTH, Engine::STAGE_TARGET_HEIGHT, size.x / size.y, width, height);
 		
 		float aspectRatio = width / height;
 		scaledAspectRatio = scaledWidth / scaledHeight;
@@ -434,17 +434,16 @@ namespace MikuMikuWorld
 
 	void ScorePreviewWindow::loadNoteEffects(Effect::EffectView& effectView)
 	{
+		int oldProfile = config.pvEffectsProfile == 1 ? 0 : 1;
+		const std::string oldEffectsDir = Application::getAppDir() + "res\\effect\\" + std::to_string(oldProfile) + "\\";
 		const std::string effectsDir = Application::getAppDir() + "res\\effect\\" + std::to_string(config.pvEffectsProfile) + "\\";
 		size_t effectCount = arrayLength(Effect::effectNames);
 
-		if (!IO::File::exists(effectsDir))
-			return;
-
 		// Cleanup. We don't want all profiles and their resources loaded in memory
 		ResourceManager::removeAllParticleEffects();
-		int texIndex = ResourceManager::getTexture("tex_note_common_all_v2.png");
+		int texIndex = ResourceManager::getTextureByFilename(oldEffectsDir + "tex_note_common_all_v2.png");
 		if (texIndex > -1)
-			ResourceManager::disposeTexture(texIndex);
+			ResourceManager::disposeTexture(ResourceManager::textures[texIndex].getID());
 
 		ResourceManager::loadTexture(effectsDir + "tex_note_common_all_v2.png");
 
