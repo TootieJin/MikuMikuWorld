@@ -6,6 +6,9 @@
 
 namespace MikuMikuWorld::Effect
 {
+	constexpr int UNDER_NOTE_ORDER_THRESHOLD = 5;
+	constexpr float EFFECT_WIDTH_RATIO = 0.84f;
+
 	static const std::map<EffectType, int> effectPoolSizes =
 	{
 		{ fx_note_normal_gen, 6 },
@@ -26,7 +29,7 @@ namespace MikuMikuWorld::Effect
 	{
 		if (flip)
 			lane = MAX_LANE - lane - width + 1;
-		return (lane - 6 + width / 2.f) * 0.84f;
+		return (lane - 6 + width / 2.f) * EFFECT_WIDTH_RATIO;
 	}
 
 	static float getEffectNoteCenter(const Note& note, bool flip)
@@ -115,6 +118,13 @@ namespace MikuMikuWorld::Effect
 		effectRoot.start(start);
 	}
 
+	void ParticleController::stop()
+	{
+		active = false;
+		time = { -1, -1 };
+		effectRoot.stop(true);
+	}
+
 	void EffectPool::setup(EffectType type, int count)
 	{
 		this->count = count;
@@ -201,14 +211,8 @@ namespace MikuMikuWorld::Effect
 	void EffectView::reset()
 	{
 		for (auto& type : effectPools)
-		{
 			for (auto& controller : type.second.pool)
-			{
-				controller.active = false;
-				controller.time = { -1, -1 };
-				controller.effectRoot.stop(true);
-			}
-		}
+				controller.stop();
 
 		playedEffectsNoteIds.clear();
 	}
@@ -363,7 +367,7 @@ namespace MikuMikuWorld::Effect
 			xPos = noteLeft + (noteRight - noteLeft) / 2;
 		}
 
-		controller.worldOffset.position = DirectX::XMVectorSetX(controller.worldOffset.position, xPos * 0.84f);
+		controller.worldOffset.position = DirectX::XMVectorSetX(controller.worldOffset.position, xPos * EFFECT_WIDTH_RATIO);
 		controller.worldOffset.rotation = DirectX::XMVectorSetZ(controller.worldOffset.rotation, zRot);
 		controller.play(note, start, end);
 	}
@@ -414,10 +418,8 @@ namespace MikuMikuWorld::Effect
 		{
 			for (auto& controller : effectPools[static_cast<EffectType>(i)].pool)
 			{
-				if (!controller.active)
-					continue;
-
-				controller.effectRoot.update(time, controller.worldOffset, camera);
+				if (controller.active)
+					controller.effectRoot.update(time, controller.worldOffset, camera);
 			}
 		}
 
@@ -440,7 +442,7 @@ namespace MikuMikuWorld::Effect
 					controller.worldOffset.scale = DirectX::XMVectorSetX(controller.worldOffset.scale, (noteRight - noteLeft) * 0.95f);
 				}
 
-				controller.worldOffset.position = DirectX::XMVectorSetX(controller.worldOffset.position, (noteLeft + (noteRight - noteLeft) / 2) * 0.84f);
+				controller.worldOffset.position = DirectX::XMVectorSetX(controller.worldOffset.position, (noteLeft + (noteRight - noteLeft) / 2) * EFFECT_WIDTH_RATIO);
 				controller.effectRoot.update(time, controller.worldOffset, camera);
 			}
 		}
@@ -448,7 +450,7 @@ namespace MikuMikuWorld::Effect
 
 	void EffectView::drawUnderNoteEffects(Renderer* renderer, float time)
 	{
-		static const EffectType underNoteEffects[] =
+		static constexpr EffectType underNoteEffects[] =
 		{
 			fx_lane_critical,
 			fx_lane_critical_flick,
@@ -493,25 +495,21 @@ namespace MikuMikuWorld::Effect
 	void EffectView::drawUnderNoteEffectsInternal(EmitterInstance& emitter, Renderer* renderer, float time)
 	{
 		const Particle& ref = ResourceManager::getParticleEffect(emitter.getRefID());
-		if (ref.order <= 5)
+		if (ref.order <= UNDER_NOTE_ORDER_THRESHOLD)
 			drawParticles(emitter.particles, ref, renderer, time);
 
 		for (auto& child : emitter.children)
-		{
 			drawUnderNoteEffectsInternal(child, renderer, time);
-		}
 	}
 	
 	void EffectView::drawEffectsInternal(EmitterInstance& emitter, Renderer* renderer, float time)
 	{
 		const Particle& ref = ResourceManager::getParticleEffect(emitter.getRefID());
-		if (ref.order > 5)
+		if (ref.order > UNDER_NOTE_ORDER_THRESHOLD)
 			drawParticles(emitter.particles, ref, renderer, time);
 
 		for (auto& child : emitter.children)
-		{
 			drawEffectsInternal(child, renderer, time);
-		}
 	}
 
 	void EffectView::drawParticles(const std::vector<ParticleInstance>& particles, const Particle& ref, Renderer* renderer, float time)
@@ -520,13 +518,10 @@ namespace MikuMikuWorld::Effect
 		float blend = ref.blend == BlendMode::Additive ? 1.f : 0.f;
 		for (auto& p : particles)
 		{
-			if (!p.alive)
+			if (!p.alive || time < p.startTime || time > p.startTime + p.duration)
 				continue;
 
 			float normalizedTime = p.time / p.duration;
-			if (time < p.startTime || time > p.startTime + p.duration)
-				continue;
-
 			int frame = ref.textureSplitX * ref.textureSplitY * ref.startFrame.evaluate(p.time, p.spriteSheetLerpRatio);
 			frame += ref.textureSplitX * ref.textureSplitY * ref.frameOverTime.evaluate(normalizedTime, p.spriteSheetLerpRatio);
 
