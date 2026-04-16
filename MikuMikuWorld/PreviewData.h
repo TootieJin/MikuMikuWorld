@@ -45,6 +45,38 @@ namespace MikuMikuWorld::Engine
 		double activeTime;
 	};
 
+	struct DrawingNoteTime
+	{
+		int refID;
+		int tick;
+		int endTick;
+		int lane;
+		float time;
+		float endTime;
+	};
+
+	class SortedDrawingNotesList
+	{
+	public:
+		void add(DrawingNoteTime note);
+		void add(const Note& note, const Score& score);
+		void add(const HoldNote& hold, const Score& score);
+		void clear();
+		void reserve(size_t capacity);
+
+		void explicitSort();
+
+		std::vector<int> getTickRange(int from, int to) const;
+
+		const std::vector<DrawingNoteTime>& getView() const;
+
+		void updateNote(int index, const Note& note, const Score& score);
+
+	private:
+		int binarySearch(int targetTick) const;
+		std::vector<DrawingNoteTime> notes;
+	};
+
 	struct DrawData
 	{
 		float noteSpeed;
@@ -53,6 +85,8 @@ namespace MikuMikuWorld::Engine
 		std::vector<DrawingLine> drawingLines;
 		std::vector<DrawingHoldTick> drawingHoldTicks;
 		std::vector<DrawingHoldSegment> drawingHoldSegments;
+
+		SortedDrawingNotesList notesList;
 		Effect::EffectView effectView;
 
 		void clear();

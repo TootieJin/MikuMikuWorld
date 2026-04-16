@@ -4,7 +4,6 @@
 #include "ApplicationConfiguration.h"
 #include "Constants.h"
 #include "ResourceManager.h"
-#include "ScoreContext.h"
 
 namespace MikuMikuWorld::Engine
 {
@@ -31,11 +30,18 @@ namespace MikuMikuWorld::Engine
 				auto& [id, note] = *rit;
 				maxTicks = std::max(note.tick, maxTicks);
 				NoteType type = note.getType();
-				if (type == NoteType::HoldMid
-					|| (type == NoteType::Hold && score.holdNotes.at(id).startType != HoldNoteType::Normal)
-					|| (type == NoteType::HoldEnd && score.holdNotes.at(note.parentID).endType != HoldNoteType::Normal))
-					continue;
-				if (type == NoteType::HoldMid)
+				switch (type)
+				{
+				case NoteType::Hold:
+					notesList.add(score.holdNotes.at(id), score);
+					break;
+				default:
+					notesList.add(note, score);
+				}
+
+				if (type == NoteType::HoldMid ||
+					type == NoteType::Hold && score.holdNotes.at(id).startType != HoldNoteType::Normal ||
+					(type == NoteType::HoldEnd && score.holdNotes.at(note.parentID).endType != HoldNoteType::Normal))
 					continue;
 					
 				auto visual_tm = getNoteVisualTime(note, score, noteSpeed);
@@ -68,6 +74,8 @@ namespace MikuMikuWorld::Engine
 			{
 				addHoldNote(*this, rit->second, score);
 			}
+
+			notesList.explicitSort();
 		}
 		catch(const std::out_of_range& ex)
 		{
@@ -81,6 +89,8 @@ namespace MikuMikuWorld::Engine
 		drawingNotes.clear();
 		drawingHoldTicks.clear();
 		drawingHoldSegments.clear();
+
+		notesList.clear();
 		effectView.reset();
 
 		maxTicks = 1;
@@ -92,6 +102,8 @@ namespace MikuMikuWorld::Engine
 		const Note& startNote = score.notes.at(holdNote.start.ID), endNote = score.notes.at(holdNote.end);
 		float activeTime = accumulateDuration(startNote.tick, TICKS_PER_BEAT, score.tempoChanges);
 		float startTime = activeTime;
+		float endTime = accumulateDuration(endNote.tick, TICKS_PER_BEAT, score.tempoChanges);
+
 		DrawingHoldStep head = {
 			startNote.tick,
 			accumulateScaledDuration(startNote.tick, TICKS_PER_BEAT, score.tempoChanges, score.hiSpeedChanges),
@@ -156,5 +168,118 @@ namespace MikuMikuWorld::Engine
 			head = tail;
 			++headIdx;
 		}
+	}
+
+	void SortedDrawingNotesList::add(DrawingNoteTime note)
+	{
+		notes.push_back(note);
+	}
+
+	void SortedDrawingNotesList::add(const Note& note, const Score& score)
+	{
+		float time = accumulateDuration(note.tick, TICKS_PER_BEAT, score.tempoChanges);
+		notes.push_back({note.ID, note.tick, note.tick, note.lane, time, time});
+	}
+
+	void SortedDrawingNotesList::add(const HoldNote& hold, const Score& score)
+	{
+		const Note& startNote = score.notes.at(hold.start.ID);
+		const Note& endNote = score.notes.at(hold.end);
+
+		float startTime = accumulateDuration(startNote.tick, TICKS_PER_BEAT, score.tempoChanges);
+		float endTime = accumulateDuration(endNote.tick, TICKS_PER_BEAT, score.tempoChanges);
+
+		notes.push_back({ startNote.ID, startNote.tick, endNote.tick, startNote.lane, startTime, endTime });
+	}
+
+	void SortedDrawingNotesList::updateNote(int index, const Note& note, const Score& score)
+	{
+		float time = accumulateDuration(note.tick, TICKS_PER_BEAT, score.tempoChanges);
+		notes.at(index).lane = note.lane;
+		notes.at(index).tick = note.tick;
+		notes.at(index).time = time;
+		
+		if (note.getType() != NoteType::Hold)
+		{
+			notes.at(index).endTick = note.tick;
+			notes.at(index).endTime = time;
+		}
+		
+		if (note.getType() == NoteType::HoldEnd)
+		{
+			for (auto& target : notes)
+			{
+				if (target.refID == note.parentID)
+				{
+					target.endTick = note.tick;
+					target.endTime = time;
+					break;
+				}
+			}
+		}
+	}
+
+	void SortedDrawingNotesList::clear()
+	{
+		notes.clear();
+	}
+
+	void SortedDrawingNotesList::explicitSort()
+	{
+		std::sort(notes.begin(), notes.end(), [](const auto& a, const auto& b)
+		{
+			return a.tick == b.tick ? a.lane < b.lane : a.tick < b.tick;
+		});
+	}
+
+	void SortedDrawingNotesList::reserve(size_t capacity)
+	{
+		notes.reserve(capacity);
+	}
+
+	const std::vector<DrawingNoteTime>& SortedDrawingNotesList::getView() const
+	{
+		return notes;
+	}
+
+	std::vector<int> SortedDrawingNotesList::getTickRange(int from, int to) const
+	{
+		// TODO: Improve this such that we don't have to backtrack through all of the notes
+		// to find hold notes in range
+		auto cutoff = std::upper_bound(notes.begin(), notes.end(), to, [](int val, const auto& note) { return val < note.tick; });
+
+		std::vector<int> result;
+		result.reserve(std::distance(notes.begin(), cutoff) + 1);
+
+		for (auto it = notes.begin(); it != cutoff; ++it)
+		{
+			// it->endTick < it->tick: hack used to keep drawing holds no matter which end is held on the timeline
+			if (it->endTick >= from || it->endTick < it->tick)
+				result.push_back(std::distance(notes.begin(), it));
+		}
+
+		return result;
+	}
+
+	int SortedDrawingNotesList::binarySearch(int targetTick) const
+	{
+		int l = 0, h = notes.size() - 1;
+		int m = l + (h - l) / 2;
+		
+		while (l < h)
+		{
+			int middleTick = notes.at(m).tick;
+
+			if (middleTick < targetTick)
+				l = m + 1;
+			else if (middleTick > targetTick)
+				h = m - 1;
+			else
+				return m;
+
+			m = l + (h - l) / 2;
+		}
+
+		return m;
 	}
 }

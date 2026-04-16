@@ -1,8 +1,8 @@
 #include "ScoreContext.h"
 #include "AggregateNotesFilter.h"
-#include "IO.h"
 #include "Utilities.h"
 #include "UI.h"
+#include "Clipboard.h"
 #include <vector>
 
 using json = nlohmann::json;
@@ -10,8 +10,6 @@ using namespace IO;
 
 namespace MikuMikuWorld
 {
-	constexpr const char* clipboardSignature = "MikuMikuWorld clipboard\n";
-
 	static InverseNotesFilter inverseGuideFilter(CommonNoteFilters::guideFilter());
 
 	static bool noteExists(const int id, const Score& score)
@@ -64,19 +62,20 @@ namespace MikuMikuWorld
 		bool edit = false;
 		const Score prev = score;
 
-		if (flick == FlickType::FlickTypeCount)
+		for (int id : filteredNotes)
 		{
-			edit = true;
-			for (int id : filteredNotes)
-				cycleFlick(score.notes.at(id));
-		}
-		else
-		{
-			for (int id : filteredNotes)
+			Note& note = score.notes.at(id);
+			FlickType newFlickType = flick == FlickType::FlickTypeCount ?
+				(FlickType)(((int)note.flick + 1) % (int)FlickType::FlickTypeCount) : flick;
+
+			edit |= note.flick != newFlickType;
+			note.flick = newFlickType;
+
+			if (note.getType() == NoteType::HoldEnd)
 			{
-				Note& note = score.notes.at(id);
-				edit |= note.flick != flick;
-				note.flick = flick;
+				const Note& parent = score.notes.at(note.parentID);
+				if (newFlickType == FlickType::None)
+					note.critical = parent.critical;
 			}
 		}
 
@@ -294,10 +293,8 @@ namespace MikuMikuWorld
 		if (selectedNotes.empty())
 			return;
 		
-		std::string clipboard{ clipboardSignature };
-		clipboard.append(jsonIO::noteSelectionToJson(score, selectedNotes, minTickFromSelection()).dump());
-
-		ImGui::SetClipboardText(clipboard.c_str());
+		std::string clipboardNotes = jsonIO::noteSelectionToJson(score, selectedNotes, minTickFromSelection()).dump();
+		Clipboard::store(clipboardNotes);
 	}
 
 	void ScoreContext::cancelPaste()
@@ -340,15 +337,9 @@ namespace MikuMikuWorld
 				pasteData.notes[end.ID] = end;
 
 				std::string startEase = jsonIO::tryGetValue<std::string>(entry["start"], "ease", "linear");
-				int startEaseTypeIndex = findArrayItem(startEase.c_str(), easeTypes, arrayLength(easeTypes));
-				if (startEaseTypeIndex == -1)
-				{
-					startEaseTypeIndex = 0;
-					if (startEase == "in") startEaseTypeIndex = 1;
-					if (startEase == "out") startEaseTypeIndex = 2;
-				}
+				EaseType startEaseType = Clipboard::stringToEaseType(startEase.c_str());
+				HoldNote hold{ { start.ID, HoldStepType::Normal, startEaseType }, {}, end.ID };
 
-				HoldNote hold{ { start.ID, HoldStepType::Normal, (EaseType)startEaseTypeIndex }, {}, end.ID };
 				if (jsonIO::keyExists(entry, "steps"))
 				{
 					hold.steps.reserve(entry["steps"].size());
@@ -360,28 +351,11 @@ namespace MikuMikuWorld
 						mid.parentID = start.ID;
 						pasteData.notes[mid.ID] = mid;
 
-						std::string midType = jsonIO::tryGetValue<std::string>(step, "type", "normal");
-						std::string midEase = jsonIO::tryGetValue<std::string>(step, "ease", "linear");
-						int stepTypeIndex = findArrayItem(midType.c_str(), stepTypes, arrayLength(stepTypes));
-						int easeTypeIndex = findArrayItem(midEase.c_str(), easeTypes, arrayLength(stepTypes));
-
-						// Maintain compatibility with old step type names
-						if (stepTypeIndex == -1)
-						{
-							stepTypeIndex = 0;
-							if (midType == "invisible") stepTypeIndex = 1;
-							if (midType == "ignored") stepTypeIndex = 2;
-						}
-
-						// Maintain compatibility with old ease type names
-						if (easeTypeIndex == -1)
-						{
-							easeTypeIndex = 0;
-							if (midEase == "in") easeTypeIndex = 1;
-							if (midEase == "out") easeTypeIndex = 2;
-						}
-
-						hold.steps.push_back({ mid.ID, (HoldStepType)stepTypeIndex, (EaseType)easeTypeIndex });
+						std::string stepTypeString = jsonIO::tryGetValue<std::string>(step, "type", "normal");
+						std::string stepEaseString = jsonIO::tryGetValue<std::string>(step, "ease", "linear");
+						HoldStepType stepType = Clipboard::stringToHoldStepType(stepTypeString.c_str());
+						EaseType easeType = Clipboard::stringToEaseType(stepEaseString.c_str());
+						hold.steps.push_back({ mid.ID, stepType, easeType });
 					}
 				}
 
@@ -393,6 +367,9 @@ namespace MikuMikuWorld
 					hold.startType = hold.endType = HoldNoteType::Guide;
 					start.friction = end.friction = false;
 					end.flick = FlickType::None;
+
+					for (auto& step : hold.steps)
+						step.type = HoldStepType::Hidden;
 				}
 				else
 				{
@@ -491,15 +468,23 @@ namespace MikuMikuWorld
 
 	void ScoreContext::paste(bool flip)
 	{
-		const char* clipboardDataPtr = ImGui::GetClipboardText();
-		if (clipboardDataPtr == nullptr)
+		std::string_view content = Clipboard::get();
+		if (content.empty())
 			return;
 
-		std::string clipboardData(clipboardDataPtr);
-		if (!startsWith(clipboardData, clipboardSignature))
-			return;
-
-		doPasteData(json::parse(clipboardData.substr(strlen(clipboardSignature))), flip);
+		try
+		{
+			json contentAsJson = json::parse(content);
+			doPasteData(contentAsJson, flip);
+		}
+		catch (const json::exception& ex)
+		{
+			printf("Failed to parse clipboard to json. Invalid clipboard contents: %s", ex.what());
+		}
+		catch (const std::exception& ex)
+		{
+			printf("Failed to paste notes from clipboard: %s", ex.what());
+		}
 	}
 
 	void ScoreContext::shrinkSelection(Direction direction)

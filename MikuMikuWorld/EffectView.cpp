@@ -19,10 +19,6 @@ namespace MikuMikuWorld::Effect
 		{ fx_note_critical_long_gen, 6 },
 		{ fx_note_flick_flash, 6 },
 		{ fx_note_critical_flick_flash, 6 },
-		{ fx_note_trace_aura, 6 },
-		{ fx_note_critical_trace_aura, 6 },
-		{ fx_note_long_hold_via_aura, 6 },
-		{ fx_note_critical_long_hold_via_aura, 6 },
 	};
 
 	static float getEffectXPos(int lane, int width, bool flip)
@@ -116,6 +112,9 @@ namespace MikuMikuWorld::Effect
 
 		effectRoot.stop(true);
 		effectRoot.start(start);
+
+		if (end == -1)
+			time.max = effectRoot.maxDuration;
 	}
 
 	void ParticleController::stop()
@@ -158,28 +157,33 @@ namespace MikuMikuWorld::Effect
 
 	void EffectView::update(const ScoreContext& context)
 	{
-		const float currentTick = context.currentTick;
 		const float currentTime = context.getTimeAtCurrentTick();
+		const int startTick = accumulateTicks(currentTime - 0.04f, TICKS_PER_BEAT, context.score.tempoChanges);
+		const int endTick = accumulateTicks(currentTime + 0.08f, TICKS_PER_BEAT, context.score.tempoChanges);
 
-		for (auto it = context.score.notes.rbegin(); it != context.score.notes.rend(); it++)
+		const auto& viewBoundary = context.scorePreviewDrawData.notesList.getTickRange(startTick, endTick);
+		const auto& notesList = context.scorePreviewDrawData.notesList.getView();
+
+		for (int i : viewBoundary)
 		{
-			const auto& [id, note] = *it;
-			if (isNoteEffectPlayed(id))
+			const auto& drawingNote = notesList.at(i);
+			if (isNoteEffectPlayed(drawingNote.refID))
 				continue;
+
+			const Note& note = context.score.notes.at(drawingNote.refID);
 
 			bool isMidHold = false;
 			if (note.getType() == NoteType::Hold)
 			{
 				const HoldNote& hold = context.score.holdNotes.at(note.ID);
 				const Note& end = context.score.notes.at(hold.end);
-				isMidHold = !hold.isGuide() && isWithinRange(currentTick, note.tick, end.tick);
+				isMidHold = !hold.isGuide() && isWithinRange(context.currentTick, note.tick, end.tick);
 			}
 
-			float noteTime = accumulateDuration(note.tick, TICKS_PER_BEAT, context.score.tempoChanges);
-			if (isMidHold || isWithinRange(currentTime, noteTime - 0.02f, noteTime + 0.04f))
+			if (isMidHold || isWithinRange(currentTime, drawingNote.time - 0.02f, drawingNote.time + 0.04f))
 			{
-				addNoteEffects(note, context, noteTime);
-				playedEffectsNoteIds.insert(id);
+				addNoteEffects(note, context, drawingNote.time);
+				playedEffectsNoteIds.insert(drawingNote.refID);
 			}
 		}
 	}
@@ -193,7 +197,7 @@ namespace MikuMikuWorld::Effect
 			effectPools.insert_or_assign(type, EffectPool());
 
 			EffectPool& effPool = effectPools[type];
-			int size = 12;
+			int size = MAX_LANE + 1;
 			auto poolSizeIt = effectPoolSizes.find(type);
 
 			if (poolSizeIt != effectPoolSizes.end())
@@ -418,6 +422,9 @@ namespace MikuMikuWorld::Effect
 		{
 			for (auto& controller : effectPools[static_cast<EffectType>(i)].pool)
 			{
+				if (time >= controller.time.max)
+					controller.active = false;
+
 				if (controller.active)
 					controller.effectRoot.update(time, controller.worldOffset, camera);
 			}
@@ -492,36 +499,36 @@ namespace MikuMikuWorld::Effect
 			drawEffectsInternal(c->effectRoot, renderer, time);
 	}
 
-	void EffectView::drawUnderNoteEffectsInternal(EmitterInstance& emitter, Renderer* renderer, float time)
+	void EffectView::drawUnderNoteEffectsInternal(EmitterInstance& emitter, Renderer* renderer, float time) const
 	{
 		const Particle& ref = ResourceManager::getParticleEffect(emitter.getRefID());
 		if (ref.order <= UNDER_NOTE_ORDER_THRESHOLD)
-			drawParticles(emitter.particles, ref, renderer, time);
+			drawParticles(emitter.particles, ref, emitter.getAliveCount(), renderer, time);
 
 		for (auto& child : emitter.children)
 			drawUnderNoteEffectsInternal(child, renderer, time);
 	}
 	
-	void EffectView::drawEffectsInternal(EmitterInstance& emitter, Renderer* renderer, float time)
+	void EffectView::drawEffectsInternal(EmitterInstance& emitter, Renderer* renderer, float time) const
 	{
 		const Particle& ref = ResourceManager::getParticleEffect(emitter.getRefID());
 		if (ref.order > UNDER_NOTE_ORDER_THRESHOLD)
-			drawParticles(emitter.particles, ref, renderer, time);
+			drawParticles(emitter.particles, ref, emitter.getAliveCount(), renderer, time);
 
 		for (auto& child : emitter.children)
 			drawEffectsInternal(child, renderer, time);
 	}
 
-	void EffectView::drawParticles(const std::vector<ParticleInstance>& particles, const Particle& ref, Renderer* renderer, float time)
+	void EffectView::drawParticles(const std::vector<ParticleInstance>& particles, const Particle& ref, size_t count, Renderer* renderer, float time) const
 	{
 		int flipUVs = ref.renderMode == RenderMode::StretchedBillboard ? 1 : 0;
 		float blend = ref.blend == BlendMode::Additive ? 1.f : 0.f;
-		for (auto& p : particles)
-		{
-			if (!p.alive || time < p.startTime || time > p.startTime + p.duration)
-				continue;
 
+		for (size_t i = 0; i < count; i++)
+		{
+			const auto& p = particles.at(i);
 			float normalizedTime = p.time / p.duration;
+
 			int frame = ref.textureSplitX * ref.textureSplitY * ref.startFrame.evaluate(p.time, p.spriteSheetLerpRatio);
 			frame += ref.textureSplitX * ref.textureSplitY * ref.frameOverTime.evaluate(normalizedTime, p.spriteSheetLerpRatio);
 

@@ -64,19 +64,7 @@ namespace MikuMikuWorld
 
 		int width{ static_cast<int>(config.windowSize.x) }, height{ static_cast<int>(config.windowSize.y) };
 
-		if (config.fullScreen)
-		{
-			GLFWmonitor* mainMonitor = glfwGetPrimaryMonitor();
-			const GLFWvidmode* mode = glfwGetVideoMode(mainMonitor);
-
-			width = mode->width, height = mode->height;
-			window = glfwCreateWindow(width, height, APP_NAME, mainMonitor, NULL);
-		}
-		else
-		{
-			window = glfwCreateWindow(width, height, APP_NAME, NULL, NULL);
-		}
-
+		window = glfwCreateWindow(width, height, APP_NAME, NULL, NULL);
 		possibleError = glfwGetError(&glfwErrorDescription);
 		if (possibleError != GLFW_NO_ERROR)
 		{
@@ -118,7 +106,7 @@ namespace MikuMikuWorld
 
 		glLineWidth(1.0f);
 		glPointSize(1.0f);
-		glEnablei(GL_BLEND, 0);
+		glEnable(GL_BLEND);
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 		glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
 		glViewport(0, 0, width, height);

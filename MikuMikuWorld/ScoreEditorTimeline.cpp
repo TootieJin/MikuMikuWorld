@@ -700,11 +700,16 @@ namespace MikuMikuWorld
 			}
 
 			// Selection boxes
-			for (int id : context.selectedNotes)
+			std::vector<int> viewBoundary = context.scorePreviewDrawData.notesList.getTickRange(firstTick, lastTick + ticksPerMeasure);
+			const auto& notesList = context.scorePreviewDrawData.notesList.getView();
+			for (int i : viewBoundary)
 			{
-				const Note& note = context.score.notes.at(id);
-				if (!isNoteVisible(note, 0))
+				const int id = notesList.at(i).refID;
+				auto it = context.selectedNotes.find(id);
+				if (it == context.selectedNotes.end())
 					continue;
+
+				const Note& note = context.score.notes.at(id);
 
 				float x = position.x;
 				float y = position.y - tickToPosition(note.tick) + visualOffset;
@@ -877,103 +882,59 @@ namespace MikuMikuWorld
 		shader->use();
 		shader->setMatrix4("projection", Camera::getOffCenterOrthographicProjection(0, size.x, position.y + size.y, position.y));
 
-		slidePathFramebuffer->bind();
-		slidePathFramebuffer->clear(0, 0, 0, 0);
-
 		glDisable(GL_DEPTH_TEST);
 
-		std::vector<HoldNote> updateHolds;
-		std::vector<int> updateNoteIDs;
-		int startTick = positionToTick(visualOffset - size.y);
-		int endTick = positionToTick(visualOffset);
+		int startTick = std::max(positionToTick(visualOffset - size.y - 500), 0);
+		int endTick = positionToTick(visualOffset + 200);
+
+		minNoteYDistance = INT_MAX;
+		drawSteps.clear();
 
 		renderStats.clear();
 		Stopwatch renderTimer{};
 		renderTimer.reset();
 
-		std::for_each(context.score.notes.begin(), context.score.notes.end(), [&](const std::pair<int, Note>& pair)
-		{
-			const Note& note = pair.second;
-			if (note.getType() == NoteType::HoldEnd)
-			{
-				const Note& start = context.score.notes.at(note.parentID);
-				if (start.tick <= endTick && (note.tick >= startTick || isNoteVisible(note)))
-					updateHolds.push_back(context.score.holdNotes.at(start.ID));
-			}
-			else if (note.getType() == NoteType::Tap && isNoteVisible(note))
-			{
-				updateNoteIDs.push_back(note.ID);
-			}
-		});
+		std::vector<int> viewBoundary = context.scorePreviewDrawData.notesList.getTickRange(startTick, endTick);
+		const auto& notesList = context.scorePreviewDrawData.notesList.getView();
 
-		std::sort(updateHolds.begin(), updateHolds.end(), [&context](const HoldNote& a, const HoldNote& b) -> bool
-		{
-			const Note& a1 = context.score.notes.at(a.start.ID);
-			const Note& a2 = context.score.notes.at(a.end);
-			const Note& b1 = context.score.notes.at(b.start.ID);
-			const Note& b2 = context.score.notes.at(b.end);
-			if (a1.tick == b1.tick)
-			{
-				return a2.tick > b2.tick;
-			}
-
-			return a1.tick < b1.tick;
-		});
-
-		std::sort(updateNoteIDs.begin(), updateNoteIDs.end(), [&context](int a, int b)
-		{
-			const Note& n1 = context.score.notes.at(a);
-			const Note& n2 = context.score.notes.at(b);
-			if (n1.tick == n2.tick)
-			{
-				return n1.lane == n2.lane ? n1.ID < n2.ID : n1.lane < n2.lane;
-			}
-
-			return n1.tick < n2.tick;
-		});
-
+		slidePathFramebuffer->bind();
+		slidePathFramebuffer->clear(0, 0, 0, 0);
 		renderer->beginBatch();
-		for (const auto& hold : updateHolds)
-		{
-			drawHoldCurve(hold, context.score.notes, renderer, noteTint);
-		}
-		renderer->endBatch();
-		renderStats.addStats(renderer);
 
+		for (auto it = viewBoundary.rbegin(); it != viewBoundary.rend(); ++it)
+		{
+			const auto& noteView = notesList.at(*it);
+			const auto& note = context.score.notes.at(noteView.refID);
+
+			if (note.getType() == NoteType::Hold)
+			{
+				const HoldNote& hold = context.score.holdNotes.at(note.ID);
+				drawHoldCurve(hold, context.score.notes, renderer, noteTint);
+			}
+		}
+
+		renderer->endBatch();
 		ImGui::GetWindowDrawList()->AddImage((ImTextureID)(size_t)slidePathFramebuffer->getTexture(), position, position + size);
 
 		notesFramebuffer->bind();
 		notesFramebuffer->clear(0, 0, 0, 0);
 		renderer->beginBatch();
 
-		minNoteYDistance = INT_MAX;
-		for (auto& hold : updateHolds)
+		for (auto it = viewBoundary.rbegin(); it != viewBoundary.rend(); ++it)
 		{
-			Note& start = context.score.notes.at(hold.start.ID);
-			Note& end = context.score.notes.at(hold.end);
+			Note& note = context.score.notes.at(notesList.at(*it).refID);
+			if (updateNote(context, edit, note))
+				context.scorePreviewDrawData.notesList.updateNote(*it, note, context.score);
 
-			if (isNoteVisible(start)) updateNote(context, edit, start);
-			if (isNoteVisible(end)) updateNote(context, edit, end);
-
-			for (const auto& step : hold.steps)
+			if (note.getType() == NoteType::Hold)
 			{
-				Note& mid = context.score.notes.at(step.ID);
-				if (isNoteVisible(mid)) updateNote(context, edit, mid);
+				const HoldNote& hold = context.score.holdNotes.at(note.ID);
+				drawHoldNote(context.score.notes, hold, renderer, noteTint);
 			}
-
-			drawHoldNote(context.score.notes, hold, renderer, noteTint);
-		}
-
-		for (const auto& data : drawSteps)
-			drawOutline(data);
-
-		drawSteps.clear();
-
-		for (auto id : updateNoteIDs)
-		{
-			Note& note = context.score.notes.at(id);
-			updateNote(context, edit, note);
-			drawNote(note, renderer, noteTint);
+			else if (note.getType() == NoteType::Tap)
+			{
+				drawNote(note, renderer, noteTint);
+			}
 		}
 
 		renderer->endBatch();
@@ -993,6 +954,10 @@ namespace MikuMikuWorld
 			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 				context.confirmPaste();
 		}
+
+
+		for (const auto& data : drawSteps)
+			drawOutline(data);
 
 		if (mouseInTimeline && !isHoldingNote && (currentMode != TimelineMode::Select || insertingFever) &&
 			!pasting && !playing && !UI::isAnyPopupOpen())
@@ -1429,7 +1394,7 @@ namespace MikuMikuWorld
 		return false;
 	}
 
-	void ScoreEditorTimeline::updateNote(ScoreContext& context, EditArgs& edit, Note& note)
+	bool ScoreEditorTimeline::updateNote(ScoreContext& context, EditArgs& edit, Note& note)
 	{
 		const float btnPosY = position.y - tickToPosition(note.tick) + visualOffset - (notesHeight * 0.5f);
 		float btnPosX = laneToPosition(note.lane) + position.x - 2.0f;
@@ -1437,6 +1402,8 @@ namespace MikuMikuWorld
 		ImVec2 pos{ btnPosX, btnPosY };
 		ImVec2 noteSz{ laneToPosition(note.lane + note.width) + position.x + 2.0f - btnPosX, notesHeight };
 		ImVec2 sz{ noteControlWidth, notesHeight };
+
+		bool isAnyChange = false;
 
 		const ImGuiIO& io = ImGui::GetIO();
 		if (ImGui::IsMouseHoveringRect(pos, pos + noteSz, false) && mouseInTimeline)
@@ -1487,6 +1454,7 @@ namespace MikuMikuWorld
 
 				if (canResize)
 				{
+					isAnyChange = true;
 					ctrlMousePos.x = mousePos.x;
 					for (int id : context.selectedNotes)
 					{
@@ -1522,6 +1490,7 @@ namespace MikuMikuWorld
 
 				if (canMove)
 				{
+					isAnyChange = true;
 					for (int id : context.selectedNotes)
 					{
 						Note& n = context.score.notes.at(id);
@@ -1541,6 +1510,7 @@ namespace MikuMikuWorld
 
 				if (canMove)
 				{
+					isAnyChange = true;
 					for (int id : context.selectedNotes)
 					{
 						Note& n = context.score.notes.at(id);
@@ -1606,6 +1576,7 @@ namespace MikuMikuWorld
 
 				if (canResize)
 				{
+					isAnyChange = true;
 					ctrlMousePos.x = mousePos.x;
 					for (int id : context.selectedNotes)
 					{
@@ -1617,6 +1588,7 @@ namespace MikuMikuWorld
 		}
 
 		ImGui::PopID();
+		return isAnyChange;
 	}
 
 	void ScoreEditorTimeline::drawHoldCurve(const HoldNote& hold, const std::map<int, Note>& notes, Renderer* renderer, const Color& tint, const int offsetTicks, const int offsetLane)
@@ -1693,16 +1665,16 @@ namespace MikuMikuWorld
 			float xl2 = easeFunc(startX1, endX1, percent2) - 2;
 			float xr2 = easeFunc(startX2, endX2, percent2) + 2;
 
-			if (y2 < limitY2)
-			{
-				// Below bottom boundary
-				continue;
-			}
-			else if (y1 > limitY1)
-			{
-				// Above top boundary
-				break;
-			}
+			//if (y2 < limitY2)
+			//{
+			//	// Below bottom boundary
+			//	continue;
+			//}
+			//else if (y1 > limitY1)
+			//{
+			//	// Above top boundary
+			//	break;
+			//}
 
 			Vector2 p1{ xl1, y1 };
 			Vector2 p2{ xl1 + holdSliceSize, y1 };
@@ -2471,21 +2443,37 @@ namespace MikuMikuWorld
 			context.audio.playSoundEffect(note.critical ? SE_CRITICAL_CONNECT : SE_CONNECT, startTime, adjustedEndTime, time);
 		};
 
+
 		playingNoteSounds.clear();
-		for (const auto& [id, note] : context.score.notes)
+
+		float currentTime = context.getTimeAtCurrentTick();
+		const int currentTick = context.currentTick;
+		const int fromTick = accumulateTicks(std::max(currentTime - 1.f, 0.f), TICKS_PER_BEAT, context.score.tempoChanges);
+		const int toTick = accumulateTicks(currentTime + 1.f, TICKS_PER_BEAT, context.score.tempoChanges);
+		
+		std::vector<int> viewBoundary = context.scorePreviewDrawData.notesList.getTickRange(fromTick, toTick);
+		const auto& notesList = context.scorePreviewDrawData.notesList.getView();
+
+		for (int i : viewBoundary)
 		{
-			float noteTime = accumulateDuration(note.tick, TICKS_PER_BEAT, context.score.tempoChanges);
+			const auto& drawingNote = notesList.at(i);
+			const int id = drawingNote.refID;
+
+			float noteTime = drawingNote.time;
 			float notePlayTime = noteTime - playStartTime;
 			float offsetNoteTime = noteTime - (audioLookAhead * playbackSpeed);
 
 			if (offsetNoteTime >= timeLastFrame && offsetNoteTime < time)
 			{
+				const Note& note = context.score.notes.at(id);
 				singleNoteSEFunc(note, notePlayTime);
 				if (note.getType() == NoteType::Hold && !context.score.holdNotes.at(note.ID).isGuide())
 					holdNoteSEFunc(note, notePlayTime);
 			}
 			else if (time == playStartTime)
 			{
+				const Note& note = context.score.notes.at(id);
+
 				// Playback just started
 				if (noteTime >= time && offsetNoteTime < time)
 					singleNoteSEFunc(note, notePlayTime);

@@ -37,16 +37,16 @@ namespace MikuMikuWorld::Effect
 		float t{};
 		if (angle >= 0.000001f)
 		{
-			angle = asinf(std::min(angle, 1.f));
+			angle = asinf(angle);
 		}
 		else
 		{
 			angle = 0.f;
-			axis = DirectX::XMVectorSet(1, 0, 0, 0);
+			axis = DirectX::XMVectorSet(0, 1, 0, 0);
 			DirectX::XMStoreFloat(&t, DirectX::XMVector3Length(axis));
 
 			if (t < 0.000001f)
-				axis = DirectX::XMVectorSet(-1.f, 0, 0, 0);
+				axis = DirectX::XMVectorSet(0, -1.f, 0, 0);
 		}
 
 		DirectX::XMStoreFloat(&t, DirectX::XMVector3Dot(DirectX::XMVectorNegate(normalizedVelocity), up));
@@ -56,7 +56,7 @@ namespace MikuMikuWorld::Effect
 		DirectX::XMVECTOR lengthSquaredVector = DirectX::XMVector3LengthSq(velocity);
 
 		float lengthSquared = DirectX::XMVectorGetX(lengthSquaredVector);
-		float length = lengthSquared > 0.000001 ? sqrtf(lengthSquared) : 0.0f;
+		float length = lengthSquared > 0.000001f ? sqrtf(lengthSquared) : 0.0f;
 		float yScale = (ref.speedScale * length) + (ref.lengthScale * DirectX::XMVectorGetX(scale));
 		DirectX::XMVECTOR stretchDirection = DirectX::XMVectorScale(normalizedVelocity, yScale * 0.5f);
 
@@ -67,16 +67,9 @@ namespace MikuMikuWorld::Effect
 		return result;
 	}
 
-	// TODO: it would be much better if this was done in O(1)
 	int EmitterInstance::findFirstDeadParticle(float time) const
 	{
-		for (int i = 0; i < particles.size(); i++)
-		{
-			if (!particles[i].alive)
-				return i;
-		}
-
-		return -1;
+		return aliveCount;
 	}
 
 	int EmitterInstance::getMaxParticleCount() const
@@ -123,10 +116,9 @@ namespace MikuMikuWorld::Effect
 		}
 	}
 
-	void EmitterInstance::emit(const Transform& worldTransform, const Particle& ref, float time)
+	void EmitterInstance::emit(const Transform& worldTransform, const Particle& ref, float time, int count)
 	{
-		int instanceIndex = findFirstDeadParticle(time);
-		if (instanceIndex == -1)
+		if (aliveCount >= particles.size())
 			return;
 
 		DirectX::XMVECTOR qBase = quaternionFromZYX(baseTransform.rotation);
@@ -142,194 +134,278 @@ namespace MikuMikuWorld::Effect
 
 		DirectX::XMVECTOR position = DirectX::XMVectorAdd(DirectX::XMVectorAdd(transformPos, basePos), shapePos);
 
-		float cy{}, cz{}, ey{}, ez{};
+		std::array<float, 4> shapeRandomSetX{};
+		std::array<float, 4> shapeRandomSetY{};
+		std::array<float, 4> shapeRandomSetZ{};
 
-		float a = initialRandom.nextFloat();
-		float b = initialRandom.nextFloat();
-		float c = initialRandom.nextFloat();
-		if (ref.startSize.is3D)
-		{
-			cy = initialRandom.nextFloat();
-			cz = initialRandom.nextFloat();
-		}
+		std::array<float, 4> velocityRandomSetX{};
+		std::array<float, 4> velocityRandomSetY{};
+		std::array<float, 4> velocityRandomSetZ{};
 
-		float d = initialRandom.nextFloat();
-		float e = initialRandom.nextFloat();
-		if (ref.startRotation.is3D)
-		{
-			ey = initialRandom.nextFloat();
-			ez = initialRandom.nextFloat();
-		}
-
-		float f = initialRandom.nextFloat();
-		float g = initialRandom.nextFloat();
-		float h = initialRandom.nextFloat();
-
-		float length = ref.startSpeed.evaluate(b);
-		DirectX::XMFLOAT3 startRotation = ref.startRotation.is3D ?
-			ref.startRotation.evaluate(0, {e, ey, ez}, 0) : ref.startRotation.evaluate(0, e, 0);
-
-		DirectX::XMVECTOR emitPosition = DirectX::XMVectorSet(0, 0, 0, 1);
-		DirectX::XMVECTOR direction = DirectX::XMVectorSet(0, 0, 0, 0);
-
-		if (ref.emission.shape == EmissionShape::Box)
-		{
-			float shapeRandomX = shapeRandom.nextFloat();
-			float shapeRandomY = shapeRandom.nextFloat();
-			float shapeRandomZ = shapeRandom.nextFloat();
-
-			DirectX::XMVECTOR halfScale = DirectX::XMVectorScale(ref.emission.transform.scale, .5f);
-			DirectX::XMFLOAT3 halves{};
-			DirectX::XMStoreFloat3(&halves, halfScale);
-
-			float x = lerp(-halves.x, halves.x, shapeRandomX);
-			float y = lerp(-halves.y, halves.y, shapeRandomY);
-			float z = lerp(-halves.z, halves.z, shapeRandomZ);
-			emitPosition = DirectX::XMVectorSet(x, y, z, 1);
-
-			emitPosition = DirectX::XMVectorAdd(DirectX::XMVector3Rotate(emitPosition, qAll), position);
-			direction = DirectX::XMVector3Rotate({ 0, 0, 1, 0 }, qBaseRef);
-		}
-		else if (ref.emission.shape == EmissionShape::Cone)
-		{
-			float arc{};
-			switch (ref.emission.arcMode)
-			{
-			case ArcMode::Loop:
-				arc = DirectX::XMConvertToRadians(emissionPosition);
-				emissionPosition += ref.emission.arcSpeed.evaluate(std::max(time - startTime, 0.f), shapeRandom.nextFloat()) * (time - startTime) * 360.f;
-				emissionPosition = fmodf(emissionPosition, ref.emission.arc);
-				break;
-			case ArcMode::BurstSpread:
-				arc = DirectX::XMConvertToRadians(emissionPosition);
-				emissionPosition += emissionPositionInterval;
-				break;
-			default:
-				arc = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandom.nextFloat());
-			}
-
-			float angle = DirectX::XMConvertToRadians(ref.emission.angle);
-			float radius =lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandom.nextFloat());
-			float localRadius = tanf(angle) * length;
-
-			float x = cosf(arc) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
-			float y = sinf(arc) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
-			float z = ref.emission.emitFrom == EmitFrom::Volume ? lerp(0, length, shapeRandom.nextFloat()) : 0;
-
-			float xRandom = lerp(-ref.emission.randomizeDirection, ref.emission.randomizeDirection, globalRandom.get());
-			float yRandom = lerp(-ref.emission.randomizeDirection, ref.emission.randomizeDirection, globalRandom.get());
-			float zRandom = lerp(-ref.emission.randomizeDirection, ref.emission.randomizeDirection, globalRandom.get());
-
-			emitPosition = DirectX::XMVectorAdd(DirectX::XMVectorSet(x, y, z, 0), DirectX::XMVectorSet(xRandom, yRandom, zRandom, 0));
-			DirectX::XMVECTOR positionNormalized = DirectX::XMVectorSetZ(DirectX::XMVector3Normalize(emitPosition), cosf(angle));
-			DirectX::XMVECTOR angles = DirectX::XMVectorSet(sinf(angle), sinf(angle), 1.f, 1.f);
-			direction = DirectX::XMVector3Rotate(DirectX::XMVectorMultiply(positionNormalized, angles), qAll);
-
-			emitPosition = DirectX::XMVectorAdd(DirectX::XMVector3Rotate(emitPosition, qAll), position);
-		}
-		else if (ref.emission.shape == EmissionShape::Circle)
-		{
-			float angle{};
-			switch (ref.emission.arcMode)
-			{
-			case ArcMode::Loop:
-				angle = DirectX::XMConvertToRadians(emissionPosition);
-				emissionPosition += fmodf(ref.emission.arcSpeed.evaluate(std::max(time - startTime, 0.f), 0) * (time - startTime) * 360.f, ref.emission.arc);
-				break;
-			case ArcMode::BurstSpread:
-				angle = DirectX::XMConvertToRadians(emissionPosition);
-				emissionPosition += emissionPositionInterval;
-				break;
-			default:
-				angle = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandom.nextFloat());
-			}
-
-			float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandom.nextFloat());
-
-			float x = cosf(angle) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
-			float y = sinf(angle) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
-			emitPosition = DirectX::XMVector3Rotate(DirectX::XMVectorSet(x, y, 0, 1), qAll);
-			
-			direction = emitPosition;
-			emitPosition = DirectX::XMVectorAdd(emitPosition, position);
-		}
-		else if (ref.emission.shape == EmissionShape::Sphere)
-		{
-			float angle = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandom.nextFloat());
-			float angle2 = lerp(0, DirectX::XMConvertToRadians(180), shapeRandom.nextFloat());
-			float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandom.nextFloat());
-
-			float x = cosf(angle) * sinf(angle2) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
-			float y = sinf(angle) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
-			float z = cosf(angle) * cosf(angle2) * radius * DirectX::XMVectorGetZ(ref.emission.transform.scale);
-			emitPosition = DirectX::XMVector3Rotate(DirectX::XMVectorSet(x, y, z, 1), qAll);
-
-			direction = emitPosition;
-			emitPosition = DirectX::XMVectorAdd(emitPosition, position);
-		}
-		else if (ref.emission.shape == EmissionShape::HemiShpere)
-		{
-			float angle = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandom.nextFloat());
-			float angle2 = lerp(0, NUM_PI_2, shapeRandom.nextFloat());
-			float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandom.nextFloat());
-
-			float x = cosf(angle) * sinf(angle2) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
-			float y = sinf(angle) * sinf(angle2) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
-			float z = cosf(angle2) * radius * DirectX::XMVectorGetZ(ref.emission.transform.scale);
-			emitPosition = DirectX::XMVector3Rotate(DirectX::XMVectorSet(x, y, z, 1), qAll);
-
-			direction = emitPosition;
-			emitPosition = DirectX::XMVectorAdd(emitPosition, position);
-		}
-
-		direction = DirectX::XMVector3Normalize(direction);
+		std::array<float, 4> sizeRandomSet{};
 		
-		ParticleInstance& instance = particles[instanceIndex];
-		instance.alive = true;
-		instance.transform.position = emitPosition;
-		instance.transform.rotation = DirectX::XMVectorNegate(DirectX::XMLoadFloat3(&startRotation));
+		std::array<float, 4> initialA{};
+		std::array<float, 4> initialB{};
+		std::array<float, 4> initialC{};
+		std::array<float, 4> initialD{};
+		std::array<float, 4> initialE{};
+		std::array<float, 4> initialCy{};
+		std::array<float, 4> initialEy{};
+		std::array<float, 4> initialEz{};
 
-		instance.duration = ref.startLifeTime.evaluate(a);
-		instance.spriteSheetLerpRatio = a;
-		instance.gravityLerpRatio = h;
-
-		instance.startColor = ref.startColor.evaluate(g);
-		instance.colorLerpRatio = g;
-
-		instance.direction = direction;
-		instance.speed = length;
-		instance.startTime = time;
-		instance.time = 0;
-
-		float velocityR = velocityRandom.nextFloat();
-		instance.velocityLerpRatio = velocityR;
-		instance.limitVelocityLerpRatio = velocityR;
-		instance.forceLerpRatio = velocityR;
-
-		instance.rotationLerpRatio = e;
-		instance.sizeLerpRatio = c;
-
-		DirectX::XMFLOAT3 startSize = ref.startSize.is3D ?
-			ref.startSize.evaluate(0, { c, cy, cz }, 1) : ref.startSize.evaluate(0, c, 1);
-		instance.transform.scale = DirectX::XMVectorMultiply(ref.transform.scale, DirectX::XMLoadFloat3(&startSize));
-
-		// world transform will be included during emission for world space
-		// for local space, the world transform will be included during particle update 
-		if (ref.simulationSpace == TransformSpace::World)
+		for (int i = 0; i < count; i++)
 		{
-			DirectX::XMVECTOR qShift = quaternionFromZYX(worldTransform.rotation);
-			DirectX::XMMATRIX worldOffset = DirectX::XMMatrixIdentity();
-			worldOffset *= DirectX::XMMatrixRotationQuaternion(qShift);
-			worldOffset *= DirectX::XMMatrixTranslationFromVector(worldTransform.position);
+			int instanceIndex = findFirstDeadParticle(time);
+			if (!isArrayIndexInBounds(instanceIndex, particles))
+				return;
 
-			instance.transform.position = DirectX::XMVector3Transform(instance.transform.position, worldOffset);
-			instance.transform.rotation = DirectX::XMVectorAdd(instance.transform.rotation, worldTransform.rotation);
-			instance.direction = DirectX::XMVector3Rotate(instance.direction, qShift);
+			if (i % 4 == 0)
+			{
+				initialA = initialRandom.nextFloat();
+				initialB = initialRandom.nextFloat();
+
+				initialC = initialRandom.nextFloat();
+				if (ref.startSize.is3D)
+				{
+					initialCy = initialRandom.nextFloat();
+				}
+
+				initialD = initialRandom.nextFloat();
+				
+				initialE = initialRandom.nextFloat();
+				if (ref.startRotation.is3D)
+				{
+					initialEy = initialRandom.nextFloat();
+					initialEz = initialRandom.nextFloat();
+				}
+
+				velocityRandomSetX = velocityRandom.nextFloat();
+				if (ref.velocityOverLifetime.is3D)
+				{
+					velocityRandomSetY = velocityRandom.nextFloat();
+					velocityRandomSetZ = velocityRandom.nextFloat();
+				}
+
+				sizeRandomSet = sizeRandom.nextFloat();
+			}
+
+			int randomSetIndex = i % 4;
+
+			float a = initialA[randomSetIndex];
+			float b = initialB[randomSetIndex];
+			float c = initialC[randomSetIndex];
+			float cy = initialCy[randomSetIndex];
+			float d = initialD[randomSetIndex];
+			float e = initialE[randomSetIndex];
+			float ey = initialEy[randomSetIndex];
+			float ez = initialEz[randomSetIndex];
+
+			float length = ref.startSpeed.evaluate(b);
+			DirectX::XMFLOAT3 startRotation = ref.startRotation.is3D ?
+				ref.startRotation.evaluate(0, { e, ey, ez }, 0) : ref.startRotation.evaluate(0, e, 0);
+
+			DirectX::XMVECTOR emitPosition = DirectX::XMVectorSet(0, 0, 0, 1);
+			DirectX::XMVECTOR direction = DirectX::XMVectorSet(0, 0, 0, 0);
+
+			if (ref.emission.shape == EmissionShape::Box)
+			{
+				if (randomSetIndex == 0)
+				{
+					shapeRandomSetX = shapeRandom4.nextFloat();
+					shapeRandomSetY = shapeRandom4.nextFloat();
+					shapeRandomSetZ = shapeRandom4.nextFloat();
+				}
+
+				DirectX::XMVECTOR halfScale = DirectX::XMVectorScale(ref.emission.transform.scale, .5f);
+				DirectX::XMFLOAT3 halves{};
+				DirectX::XMStoreFloat3(&halves, halfScale);
+
+				float x = lerp(-halves.x, halves.x, shapeRandomSetX[randomSetIndex]);
+				float y = lerp(-halves.y, halves.y, shapeRandomSetY[randomSetIndex]);
+				float z = lerp(-halves.z, halves.z, shapeRandomSetZ[randomSetIndex]);
+
+				emitPosition = DirectX::XMVectorSet(x, y, z, 1);
+				emitPosition = DirectX::XMVectorAdd(DirectX::XMVector3Rotate(emitPosition, qAll), position);
+				direction = DirectX::XMVector3Rotate({ 0, 0, 1, 0 }, qBaseRef);
+			}
+			else if (ref.emission.shape == EmissionShape::Cone)
+			{
+				if (randomSetIndex == 0)
+				{
+					shapeRandomSetX = shapeRandom4.nextFloat();
+					shapeRandomSetY = shapeRandom4.nextFloat();
+				}
+
+				float arc{};
+				switch (ref.emission.arcMode)
+				{
+				case ArcMode::Loop:
+					arc = DirectX::XMConvertToRadians(emissionPosition);
+					emissionPosition += ref.emission.arcSpeed.evaluate(std::max(time - startTime, 0.f), shapeRandomSetY[randomSetIndex]) * (time - startTime) * 360.f;
+					emissionPosition = fmodf(emissionPosition, ref.emission.arc);
+					break;
+				case ArcMode::BurstSpread:
+					arc = DirectX::XMConvertToRadians(emissionPosition);
+					emissionPosition += emissionPositionInterval;
+					break;
+				default:
+					arc = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandomSetY[randomSetIndex]);
+				}
+
+				float angle = DirectX::XMConvertToRadians(ref.emission.angle);
+				float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandomSetX[randomSetIndex]);
+				float localRadius = tanf(angle) * length;
+
+				float x = cosf(arc) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
+				float y = sinf(arc) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
+				float z = ref.emission.emitFrom == EmitFrom::Volume ? lerp(0, length, shapeRandomSetY[randomSetIndex]) : 0;
+
+				float xRandom = lerp(-ref.emission.randomizeDirection, ref.emission.randomizeDirection, globalRandom.get());
+				float yRandom = lerp(-ref.emission.randomizeDirection, ref.emission.randomizeDirection, globalRandom.get());
+				float zRandom = lerp(-ref.emission.randomizeDirection, ref.emission.randomizeDirection, globalRandom.get());
+
+				emitPosition = DirectX::XMVectorAdd(DirectX::XMVectorSet(x, y, z, 0), DirectX::XMVectorSet(xRandom, yRandom, zRandom, 0));
+				DirectX::XMVECTOR positionNormalized = DirectX::XMVectorSetZ(DirectX::XMVector3Normalize(emitPosition), cosf(angle));
+				DirectX::XMVECTOR angles = DirectX::XMVectorSet(sinf(angle), sinf(angle), 1.f, 1.f);
+				direction = DirectX::XMVector3Rotate(DirectX::XMVectorMultiply(positionNormalized, angles), qAll);
+
+				emitPosition = DirectX::XMVectorAdd(DirectX::XMVector3Rotate(emitPosition, qAll), position);
+			}
+			else if (ref.emission.shape == EmissionShape::Circle)
+			{
+				if (randomSetIndex == 0)
+				{
+					shapeRandomSetX = shapeRandom4.nextFloat();
+
+					if (ref.emission.arcMode != ArcMode::BurstSpread)
+						shapeRandomSetY = shapeRandom4.nextFloat();
+				}
+
+				float angle{};
+				switch (ref.emission.arcMode)
+				{
+				case ArcMode::Loop:
+					angle = DirectX::XMConvertToRadians(emissionPosition);
+					emissionPosition += fmodf(ref.emission.arcSpeed.evaluate(std::max(time - startTime, 0.f), shapeRandomSetY[randomSetIndex]) * (time - startTime) * 360.f, ref.emission.arc);
+					break;
+				case ArcMode::BurstSpread:
+					angle = DirectX::XMConvertToRadians(emissionPosition);
+					emissionPosition += emissionPositionInterval;
+					break;
+				default:
+					angle = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandomSetY[randomSetIndex]);
+				}
+
+				float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandomSetX[randomSetIndex]);
+
+				float x = cosf(angle) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
+				float y = sinf(angle) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
+				emitPosition = DirectX::XMVector3Rotate(DirectX::XMVectorSet(x, y, 0, 1), qAll);
+
+				direction = emitPosition;
+				emitPosition = DirectX::XMVectorAdd(emitPosition, position);
+			}
+			else if (ref.emission.shape == EmissionShape::Sphere)
+			{
+				if (randomSetIndex == 0)
+				{
+					shapeRandomSetX = shapeRandom4.nextFloat();
+					shapeRandomSetY = shapeRandom4.nextFloat();
+					shapeRandomSetZ = shapeRandom4.nextFloat();
+				}
+
+				float angle = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandomSetZ[randomSetIndex]);
+				float angle2 = lerp(0, DirectX::XMConvertToRadians(180), shapeRandomSetY[randomSetIndex]);
+				float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandomSetX[randomSetIndex]);
+
+				float x = cosf(angle) * sinf(angle2) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
+				float y = sinf(angle) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
+				float z = cosf(angle) * cosf(angle2) * radius * DirectX::XMVectorGetZ(ref.emission.transform.scale);
+				emitPosition = DirectX::XMVector3Rotate(DirectX::XMVectorSet(x, y, z, 1), qAll);
+
+				direction = emitPosition;
+				emitPosition = DirectX::XMVectorAdd(emitPosition, position);
+			}
+			else if (ref.emission.shape == EmissionShape::HemiShpere)
+			{
+				if (randomSetIndex == 0)
+				{
+					shapeRandomSetX = shapeRandom4.nextFloat();
+					shapeRandomSetY = shapeRandom4.nextFloat();
+					shapeRandomSetZ = shapeRandom4.nextFloat();
+				}
+
+				float angle = lerp(0, DirectX::XMConvertToRadians(ref.emission.arc), shapeRandomSetZ[randomSetIndex]);
+				float angle2 = lerp(0, NUM_PI_2, shapeRandomSetY[randomSetIndex]);
+				float radius = lerp(ref.emission.radius * (1 - ref.emission.radiusThickness), ref.emission.radius, shapeRandomSetX[randomSetIndex]);
+
+				float x = cosf(angle) * sinf(angle2) * radius * DirectX::XMVectorGetX(ref.emission.transform.scale);
+				float y = sinf(angle) * sinf(angle2) * radius * DirectX::XMVectorGetY(ref.emission.transform.scale);
+				float z = cosf(angle2) * radius * DirectX::XMVectorGetZ(ref.emission.transform.scale);
+				emitPosition = DirectX::XMVector3Rotate(DirectX::XMVectorSet(x, y, z, 1), qAll);
+
+				direction = emitPosition;
+				emitPosition = DirectX::XMVectorAdd(emitPosition, position);
+			}
+
+			direction = DirectX::XMVector3Normalize(direction);
+
+			ParticleInstance& instance = particles[instanceIndex];
+			instance.alive = true;
+			instance.transform.position = emitPosition;
+			if (ref.renderMode == RenderMode::Billboard && ref.alignment == AlignmentMode::View)
+				instance.transform.rotation = DirectX::XMLoadFloat3(&startRotation);
+			else
+				instance.transform.rotation = DirectX::XMVectorNegate(DirectX::XMLoadFloat3(&startRotation));
+
+			instance.duration = ref.startLifeTime.evaluate(a);
+			instance.spriteSheetLerpRatio = a;
+			instance.gravityLerpRatio = d;
+
+			instance.startColor = ref.startColor.evaluate(d);
+			instance.colorLerpRatio = d;
+
+			instance.direction = direction;
+			instance.speed = length;
+			instance.startTime = time;
+			instance.time = 0;
+			instance.accumulateVelocityLimit = DirectX::XMVectorZero();
+
+			instance.velocityLerpRatio =
+			{
+				velocityRandomSetX[randomSetIndex],
+				velocityRandomSetY[randomSetIndex],
+				velocityRandomSetZ[randomSetIndex],
+			};
+
+			instance.limitVelocityLerpRatio = velocityRandomSetX[randomSetIndex];
+			instance.forceLerpRatio = velocityRandomSetX[randomSetIndex];
+
+			instance.rotationLerpRatio = e;
+			instance.sizeLerpRatio = sizeRandomSet[randomSetIndex];
+
+			DirectX::XMFLOAT3 startSize = ref.startSize.is3D ?
+				ref.startSize.evaluate(0, { c, cy, 1 }, 1) : ref.startSize.evaluate(0, c, 1);
+			instance.transform.scale = DirectX::XMVectorMultiply(ref.transform.scale, DirectX::XMLoadFloat3(&startSize));
+
+			// world transform will be included during emission for world space
+			// for local space, the world transform will be included during particle update 
+			if (ref.simulationSpace == TransformSpace::World)
+			{
+				DirectX::XMVECTOR qShift = quaternionFromZYX(worldTransform.rotation);
+				DirectX::XMMATRIX worldOffset = DirectX::XMMatrixIdentity();
+				worldOffset *= DirectX::XMMatrixRotationQuaternion(qShift);
+				worldOffset *= DirectX::XMMatrixTranslationFromVector(worldTransform.position);
+
+				instance.transform.position = DirectX::XMVector3Transform(instance.transform.position, worldOffset);
+				instance.transform.rotation = DirectX::XMVectorAdd(instance.transform.rotation, worldTransform.rotation);
+				instance.direction = DirectX::XMVector3Rotate(instance.direction, qShift);
+			}
+
+			std::bernoulli_distribution flipRotationRoll(ref.flipRotation);
+			instance.flipRotation = flipRotationRoll(rand_engine);
+			aliveCount++;
 		}
-
-		std::bernoulli_distribution flipRotationRoll(ref.flipRotation);
-		instance.flipRotation = flipRotationRoll(rand_engine);
-		aliveCount++;
 	}
 
 	void EmitterInstance::updateEmission(const Particle& ref, const Transform& shift, float time)
@@ -347,7 +423,7 @@ namespace MikuMikuWorld::Effect
 				emissionPositionInterval = ref.emission.arc / rateOverTime;
 				emissionAccumulator++;
 				lastEmissionTime = time - startTime;
-				emit(shift, ref, nextEmissionTime);
+				emit(shift, ref, nextEmissionTime, 1);
 			}
 		}
 
@@ -373,8 +449,7 @@ namespace MikuMikuWorld::Effect
 					burst.lastBurstTime = time - startTime;
 					burst.cycleCount++;
 
-					for (int i = 0; i < refBurst.count; i++)
-						emit(shift, ref, time);
+					emit(shift, ref, time, refBurst.count);
 				}
 			}
 		}
@@ -383,21 +458,15 @@ namespace MikuMikuWorld::Effect
 	void EmitterInstance::start(float time)
 	{
 		const Particle& ref = ResourceManager::getParticleEffect(refID);
+
+		uint32_t seed = ref.randomSeed;
 		if (ref.useAutoRandomSeed)
-		{
-			uint32_t seed = globalRandom.get() * std::numeric_limits<uint32_t>::max();
-			initialRandom.setSeed(seed);
-			shapeRandom.setSeed(seed);
-			velocityRandom.setSeed(seed);
-			sizeRandom.setSeed(seed);
-		}
-		else
-		{
-			initialRandom.setSeed(ref.randomSeed);
-			shapeRandom.setSeed(ref.randomSeed);
-			velocityRandom.setSeed(ref.randomSeed);
-			sizeRandom.setSeed(ref.randomSeed);
-		}
+			seed = globalRandom.get() * std::numeric_limits<uint32_t>::max();
+
+		initialRandom.setSeed(seed);
+		shapeRandom4.setSeed(seed);
+		velocityRandom.setSeed(seed);
+		sizeRandom.setSeed(seed);
 
 		float emissionRandom = globalRandom.get();
 		float arcSpeedRandom = globalRandom.get();
@@ -415,8 +484,13 @@ namespace MikuMikuWorld::Effect
 		for (auto& burst : bursts)
 			burst.nextCyclesResetTime = startTime + ref.duration;
 
+		maxDuration = startTime + ref.duration + ref.startLifeTime.evaluate(1);
+
 		for (auto& child : children)
+		{
 			child.start(time);
+			maxDuration = std::max(maxDuration, child.maxDuration);
+		}
 	}
 
 	void EmitterInstance::stop(bool allChildren)
@@ -444,42 +518,52 @@ namespace MikuMikuWorld::Effect
 		}
 	}
 
-	static DirectX::XMFLOAT3& limitVelocity(DirectX::XMFLOAT3& velocity, DirectX::XMFLOAT3& limitVelocity, float damp, float time)
+	static DirectX::XMVECTOR limitVelocity(const DirectX::XMVECTOR& velocity, const DirectX::XMFLOAT3& limit, DirectX::XMVECTOR& accumulator, float damp, float dt)
 	{
 		// Extracted from UnityPlayer.dll
-		float k = powf(1 - damp, time * 30);
+		float k = 1 - powf(1 - damp, dt * 30);
 
-		float signX = velocity.x >= 0 ? 1 : -1;
-		float absX = abs(velocity.x);
-		if (absX > 0.0001 && absX > limitVelocity.x)
+		DirectX::XMVECTOR velocitySignVector = DirectX::XMVectorSet(
+			DirectX::XMVectorGetX(velocity) >= 0 ? 1 : -1,
+			DirectX::XMVectorGetY(velocity) >= 0 ? 1 : -1,
+			DirectX::XMVectorGetZ(velocity) >= 0 ? 1 : -1,
+			1
+		);
+
+		DirectX::XMVECTOR absoluteVelocity = DirectX::XMVectorAbs(velocity);
+		DirectX::XMVECTOR currentExceedingVelocity = DirectX::XMVectorSubtract(absoluteVelocity, accumulator);
+		DirectX::XMFLOAT3 amountToLimit{};
+
+		float absX = abs(DirectX::XMVectorGetX(currentExceedingVelocity));
+		if (absX > 0.0001f && absX > limit.x)
 		{
-			absX = limitVelocity.x + (absX - limitVelocity.x) * k;
-			velocity.x = absX * signX;
+			amountToLimit.x = abs((absX - limit.x) * k);
 		}
 
-		float signY = velocity.y >= 0 ? 1 : -1;
-		float absY = abs(velocity.y);
-		if (absY > 0.0001 && absY > limitVelocity.y)
+		float absY = abs(DirectX::XMVectorGetY(currentExceedingVelocity));
+		if (absY > 0.0001f && absY > limit.y)
 		{
-			absY = limitVelocity.y + (absY - limitVelocity.y) * k;
-			velocity.y = absY * signY;
+			amountToLimit.y = abs((absY - limit.y) * k);
 		}
 
-		float signZ = velocity.z >= 0 ? 1 : -1;
-		float absZ = abs(velocity.z);
-		if (absZ > 0.0001 && absZ > limitVelocity.z)
+		float absZ = abs(DirectX::XMVectorGetZ(currentExceedingVelocity));
+		if (absZ > 0.0001f && absZ > limit.z)
 		{
-			absZ = limitVelocity.z + (absZ - limitVelocity.z) * k;
-			velocity.z = absZ * signZ;
+			amountToLimit.z = abs((absZ - limit.z) * k);
 		}
 
-		return velocity;
+		DirectX::XMVECTOR limitVector = DirectX::XMLoadFloat3(&limit);
+		DirectX::XMVECTOR exceedingVelocity = DirectX::XMVectorSubtract(absoluteVelocity, limitVector);
+
+		accumulator = DirectX::XMVectorAdd(accumulator, DirectX::XMLoadFloat3(&amountToLimit));
+		return DirectX::XMVectorMultiply(DirectX::XMVectorAdd(
+			DirectX::XMLoadFloat3(&limit),
+			DirectX::XMVectorSubtract(exceedingVelocity, accumulator)
+		), velocitySignVector);
 	}
 
-	void EmitterInstance::update(float t, const Transform& worldTransform, const Camera& camera)
+	void EmitterInstance::updateParticles(const Particle& ref, float t, const Transform& worldTransform, const Camera& camera)
 	{
-		const Particle& ref = ResourceManager::getParticleEffect(refID);
-
 		const DirectX::XMMATRIX& inverseView = camera.getInverseViewMatrix();
 		DirectX::XMVECTOR qLocal = quaternionFromZYX(baseTransform.rotation);
 		DirectX::XMVECTOR qShift = quaternionFromZYX(worldTransform.rotation);
@@ -495,33 +579,33 @@ namespace MikuMikuWorld::Effect
 		const bool isViewAligned = ref.renderMode == RenderMode::Billboard && ref.alignment == AlignmentMode::View;
 		const bool isWorldAligned = ref.renderMode == RenderMode::Billboard && ref.alignment == AlignmentMode::World;
 
-		updateEmission(ref, worldTransform, t);
 
-		for (auto& p : particles)
+		for (int i = 0; i < aliveCount; i++)
 		{
-			if (!p.alive)
-				continue;
-
-			float dt = t - p.startTime - p.time;
-			p.time = t - p.startTime;
-			float normalizedTime = p.time / p.duration;
+			float dt = t - particles[i].startTime - particles[i].time;
+			particles[i].time = t - particles[i].startTime;
+			float normalizedTime = particles[i].time / particles[i].duration;
 
 			if (normalizedTime < 0)
 				continue;
 
-			if (p.time >= p.duration)
+			if (particles[i].time >= particles[i].duration)
 			{
-				p.alive = false;
-				aliveCount = std::max(aliveCount - 1, 0);
+				particles[i].alive = false;
+				std::swap(particles[i], particles[aliveCount - 1]);
+				aliveCount--;
+
+				i--;
 				continue;
 			}
+
+			auto& p = particles[i];
 
 			DirectX::XMVECTOR currentRotation = isViewAligned || isWorldAligned ? p.transform.rotation : DirectX::XMVectorAdd(rotation, p.transform.rotation);
 			if (ref.rotationOverLifetime.enabled)
 			{
 				DirectX::XMFLOAT3 temp = ref.rotationOverLifetime.integrate(0, normalizedTime, p.duration, p.rotationLerpRatio);
-				DirectX::XMVECTOR tempV = DirectX::XMLoadFloat3(&temp);
-				currentRotation = DirectX::XMVectorSubtract(currentRotation, tempV);
+				currentRotation = DirectX::XMVectorSubtract(currentRotation, DirectX::XMLoadFloat3(&temp));
 			}
 
 			// Apparently, the transform scale affects velocity too
@@ -543,7 +627,7 @@ namespace MikuMikuWorld::Effect
 			DirectX::XMVECTOR currentVelocity{};
 			if (ref.velocityOverLifetime.enabled)
 			{
-				DirectX::XMFLOAT3 vol = ref.velocityOverLifetime.evaluate(normalizedTime, p.velocityLerpRatio);
+				DirectX::XMFLOAT3 vol = ref.velocityOverLifetime.evaluate(normalizedTime, p.velocityLerpRatio.x);
 				DirectX::XMVECTOR vol1 = DirectX::XMLoadFloat3(&vol);
 				if (ref.velocitySpace == TransformSpace::Local)
 				{
@@ -563,20 +647,19 @@ namespace MikuMikuWorld::Effect
 				currentVelocity = DirectX::XMVectorAdd(currentVelocity, fol1);
 			}
 
+			float speedModifier = ref.speedModifier.evaluate(normalizedTime, p.velocityLerpRatio.x, 1.f);
 			currentVelocity = DirectX::XMVectorMultiplyAdd(p.direction, DirectX::XMVectorReplicate(p.speed), currentVelocity);
+			currentVelocity = DirectX::XMVectorMultiply(currentVelocity, DirectX::XMVectorReplicate(speedModifier));
 
-			float speedModifier = ref.speedModifier.evaluate(normalizedTime, p.velocityLerpRatio, 1.f);
 			float gravity = GRAVITY * ref.gravityModifier.evaluate(normalizedTime, p.gravityLerpRatio) * p.time;
 			DirectX::XMVECTOR gravityVector = DirectX::XMVectorSet(0, -gravity, 0, 0);
-			
-			currentVelocity = DirectX::XMVectorMultiply(currentVelocity, DirectX::XMVectorReplicate(speedModifier));
 			currentVelocity = DirectX::XMVectorMultiplyAdd(currentVelocity, velocityScale, gravityVector);
-			DirectX::XMFLOAT3 velocity{};
-			DirectX::XMStoreFloat3(&velocity, currentVelocity);
-
-			DirectX::XMFLOAT3 velocityLimit = ref.limitVelocityOverLifetime.evaluate(normalizedTime, p.limitVelocityLerpRatio);
-			velocity = limitVelocity(velocity, velocityLimit, ref.limitVelocityDampen, p.time);
-			currentVelocity = DirectX::XMLoadFloat3(&velocity);
+			
+			if (ref.limitVelocityOverLifetime.enabled)
+			{
+				DirectX::XMFLOAT3 velocityLimit = ref.limitVelocityOverLifetime.evaluate(normalizedTime, p.limitVelocityLerpRatio);
+				currentVelocity = limitVelocity(currentVelocity, velocityLimit, p.accumulateVelocityLimit, ref.limitVelocityDampen, dt);
+			}
 
 			p.transform.position = DirectX::XMVectorAdd(
 				DirectX::XMVectorMultiply(currentVelocity, DirectX::XMVectorReplicate(dt)),
@@ -620,21 +703,28 @@ namespace MikuMikuWorld::Effect
 			p.matrix *= DirectX::XMMatrixScalingFromVector(currentScale);
 			p.matrix *= DirectX::XMMatrixTranslationFromVector(DirectX::XMVectorMultiply(pivot, pivotScale));
 			DirectX::XMMATRIX m4Rotation = DirectX::XMMatrixRotationQuaternion(quaternionFromZYX(currentRotation));
-			
+
 			if (ref.renderMode == RenderMode::StretchedBillboard)
 				directionMatrix *= DirectX::XMMatrixInverse(nullptr, m4Rotation);
 
 			p.matrix *= directionMatrix;
 			p.matrix *= m4Rotation;
 			p.matrix *= DirectX::XMMatrixTranslationFromVector(p.transform.position);
-			
+
 			if (ref.simulationSpace == TransformSpace::Local)
 				p.matrix *= worldOffset;
 		}
+	}
+
+	void EmitterInstance::update(float t, const Transform& worldTransform, const Camera& camera)
+	{
+		const Particle& ref = ResourceManager::getParticleEffect(refID);
+		updateEmission(ref, worldTransform, t);
+
+		if (aliveCount > 0)
+			updateParticles(ref, t, worldTransform, camera);
 
 		for (auto& em : children)
-		{
 			em.update(t, worldTransform, camera);
-		}
 	}
 }
